@@ -415,17 +415,33 @@ async function connect() {
 async function buySluggs() {
   if (!walletAddr) { setStatus("connect first", "err"); return; }
   const count = Math.max(1, Math.min(100, parseInt($("mint-count").value, 10) || 1));
-  setStatus(`buying ${count} slugg${count > 1 ? "s" : ""}…`, "pending");
+  setStatus(`buying ${count} slugg${count > 1 ? "s" : ""} via v4 swap…`, "pending");
   $("btn-mint").disabled = true;
   try {
-    const data = "0x" + SEL_MINT_OPEN + BigInt(count).toString(16).padStart(64, "0");
+    // Real v4 buy: deposit ETH → pool gives USLUG → hook re-rolls seed → 404 mints NFTs.
+    // ALSO funds the WETH side of the pool so SELL works for everyone afterward.
+    const usluggOut = BigInt(count) * 1000n;  // 3 decimals → count whole sluggs in raw units
+    // Generous max ETH to cover any tick-walk slippage. Excess refunds via USluggSwap.
+    // Testnet pool started at tick 0 → 1 raw USLUG = ~1 wei WETH. We send 1000x for safety.
+    const maxEthIn = usluggOut * 1000n;  // count * 10^6 wei (still microscopic on testnet)
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800);
+    const SEL_BUY = "40993b26"; // buy(usluggOut, maxEthIn, deadline)
+    const data = "0x" + SEL_BUY
+      + usluggOut.toString(16).padStart(64, "0")
+      + maxEthIn.toString(16).padStart(64, "0")
+      + deadline.toString(16).padStart(64, "0");
     const txHash = await window.ethereum.request({
       method: "eth_sendTransaction",
-      params: [{ from: walletAddr, to: MINT_HELPER, data }],
+      params: [{
+        from: walletAddr,
+        to: SWAP,
+        data,
+        value: "0x" + maxEthIn.toString(16),
+      }],
     });
     setStatus(`tx ${txHash.slice(0,12)}… waiting`, "pending");
     await waitReceipt(txHash);
-    setStatus(`${count} slugg${count > 1 ? "s" : ""} minted ✓`, "ok");
+    setStatus(`${count} slugg${count > 1 ? "s" : ""} bought ✓ (excess ETH refunded)`, "ok");
     refreshBalance();
     refreshMine();
     refreshAll();
