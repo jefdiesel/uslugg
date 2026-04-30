@@ -7,6 +7,7 @@ import {IUSluggClaimed}   from "./IUSluggClaimed.sol";
 
 interface IUSluggClaimedRendererSet {
     function setRenderer(IUSluggRenderer r) external;
+    function setRoyalty(address recipient, uint96 bps) external;
 }
 
 /// @notice Hybrid ERC-20 + Slugg NFT, with ERC-721 visibility events so wallets
@@ -85,6 +86,8 @@ contract USlugg404 {
     error NotOwner();
     error InsufficientBalance();
     error InsufficientAllowance();
+    error InvalidRecipient();
+    error Reentrant();
     error ZeroTokensPerSlugg();
     error NotSluggHolder();
     error NotClaimedHolder();
@@ -98,6 +101,16 @@ contract USlugg404 {
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
+    }
+
+    /// @dev Inline reentrancy guard. Defense-in-depth on claim/unclaim; the
+    /// trust model (claimedNft set by onlyOwner) makes this belt-and-suspenders.
+    uint8 private _locked = 1;
+    modifier nonReentrant() {
+        if (_locked != 1) revert Reentrant();
+        _locked = 2;
+        _;
+        _locked = 1;
     }
 
     constructor(
@@ -146,6 +159,13 @@ contract USlugg404 {
         IUSluggClaimedRendererSet(address(claimedNft)).setRenderer(IUSluggRenderer(newRenderer));
     }
 
+    /// @notice Owner passthrough for EIP-2981 royalty config on USluggClaimed.
+    /// Marketplaces will pay this percentage of secondary sales to `recipient`.
+    function setClaimedRoyalty(address recipient, uint96 bps) external onlyOwner {
+        require(address(claimedNft) != address(0), "claimedNft not configured");
+        IUSluggClaimedRendererSet(address(claimedNft)).setRoyalty(recipient, bps);
+    }
+
     function setTreasury(address payable t) external onlyOwner {
         treasury = t;
         emit TreasurySet(t);
@@ -185,6 +205,9 @@ contract USlugg404 {
     }
 
     function _move(address from, address to, uint256 amount) internal {
+        // Reject address(0) — minting an NFT to zero would store ownerOf[id]=0
+        // (indistinguishable from never-minted) and bloat _inventory[address(0)].
+        if (to == address(0)) revert InvalidRecipient();
         uint256 fb = balanceOf[from];
         if (fb < amount) revert InsufficientBalance();
 
@@ -264,7 +287,7 @@ contract USlugg404 {
 
     // -------- claim / unclaim (standalone ERC-721 wrapping with treasury fee) --------
 
-    function claim(uint256 id) external payable returns (uint256 claimedId) {
+    function claim(uint256 id) external payable nonReentrant returns (uint256 claimedId) {
         if (address(claimedNft) == address(0)) revert ClaimedNotConfigured();
         if (ownerOf[id] != msg.sender) revert NotSluggHolder();
         if (treasury == address(0) && claimFeeWei > 0) revert TreasuryNotSet();
@@ -296,7 +319,7 @@ contract USlugg404 {
         emit SluggClaimed(msg.sender, id, claimedId, msg.value);
     }
 
-    function unclaim(uint256 claimedId) external payable returns (uint256 newSluggId) {
+    function unclaim(uint256 claimedId) external payable nonReentrant returns (uint256 newSluggId) {
         if (address(claimedNft) == address(0)) revert ClaimedNotConfigured();
         if (claimedNft.ownerOf(claimedId) != msg.sender) revert NotClaimedHolder();
         if (treasury == address(0) && unclaimFeeWei > 0) revert TreasuryNotSet();

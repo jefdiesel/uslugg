@@ -24,6 +24,12 @@ contract USluggClaimed {
     address public immutable uslugg404;
     IUSluggRenderer public renderer;
 
+    /// @notice EIP-2981 royalty config — recipient and basis points (10000 = 100%).
+    /// Updated via USlugg404 (which is `uslugg404` here) so the parent governance
+    /// applies. Hard-capped at 10% to keep marketplaces willing to honor.
+    address public royaltyRecipient;
+    uint96  public royaltyBps;
+
     mapping(uint256 => Claimed)                       public claimed;
     mapping(uint256 => address)                       public ownerOf;
     mapping(address => uint256)                       public balanceOf;
@@ -41,6 +47,9 @@ contract USluggClaimed {
     error WrongFrom();
     error NotAuthorized();
     error TokenDoesNotExist();
+    error RoyaltyTooHigh();
+
+    event RoyaltySet(address indexed recipient, uint96 bps);
 
     modifier onlyUslugg404() {
         if (msg.sender != uslugg404) revert OnlyUSlugg404();
@@ -56,6 +65,23 @@ contract USluggClaimed {
     /// owner controls upgrades via USlugg404.setClaimedRenderer().
     function setRenderer(IUSluggRenderer r) external onlyUslugg404 {
         renderer = r;
+    }
+
+    /// @notice EIP-2981 royalty setter. Hard-capped at 10% (1000 bps) so the
+    /// claimed NFTs remain marketplace-friendly (OpenSea / Blur honor 2981 up
+    /// to ~10% by convention).
+    function setRoyalty(address recipient, uint96 bps) external onlyUslugg404 {
+        if (bps > 1000) revert RoyaltyTooHigh();
+        royaltyRecipient = recipient;
+        royaltyBps = bps;
+        emit RoyaltySet(recipient, bps);
+    }
+
+    /// @notice EIP-2981 — marketplaces query this to know who gets royalties on a sale.
+    function royaltyInfo(uint256 /* tokenId */, uint256 salePrice)
+        external view returns (address receiver, uint256 amount)
+    {
+        return (royaltyRecipient, salePrice * royaltyBps / 10_000);
     }
 
     /// @notice Mint a claimed NFT. Only callable by USlugg404 during claim().
@@ -124,6 +150,9 @@ contract USluggClaimed {
     }
 
     function supportsInterface(bytes4 i) external pure returns (bool) {
-        return i == 0x01ffc9a7 || i == 0x80ac58cd || i == 0x5b5e139f;
+        return i == 0x01ffc9a7  // ERC-165
+            || i == 0x80ac58cd  // ERC-721
+            || i == 0x5b5e139f  // ERC-721 Metadata
+            || i == 0x2a55205a; // EIP-2981 royalties
     }
 }

@@ -107,7 +107,7 @@ contract USluggSwap is IUnlockCallback {
             // v4 settle pattern: sync(), transfer to PM, settle()
             poolManager.sync(key.currency1);
             weth.deposit{value: wethOwed}();
-            weth.transfer(address(poolManager), wethOwed);
+            require(weth.transfer(address(poolManager), wethOwed), "weth.transfer");
             poolManager.settle();
 
             uint256 usluggOut = uint256(d0);
@@ -124,7 +124,7 @@ contract USluggSwap is IUnlockCallback {
             uint256 usluggOwed = uint256(-d0);
 
             poolManager.sync(key.currency0);
-            slugg.transfer(address(poolManager), usluggOwed);
+            require(slugg.transfer(address(poolManager), usluggOwed), "slugg.transfer");
             poolManager.settle();
 
             uint256 wethRecv = uint256(d1);
