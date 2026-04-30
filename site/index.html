@@ -97,17 +97,17 @@
 
   <hr class="sep">
 
-  <h2>YOUR SLUGGS (404)</h2>
-  <div id="mine" class="grid"></div>
-  <div id="mine-empty" class="empty">no sluggs yet — connect + faucet</div>
+  <div id="section-mine" style="display:none;">
+    <h2>YOUR SLUGGS</h2>
+    <div id="mine" class="grid"></div>
+    <hr class="sep">
+  </div>
 
-  <hr class="sep">
-
-  <h2>YOUR CLAIMED (ERC-721)</h2>
-  <div id="claimed" class="grid"></div>
-  <div id="claimed-empty" class="empty">nothing claimed yet — open a slugg → click CLAIM</div>
-
-  <hr class="sep">
+  <div id="section-claimed" style="display:none;">
+    <h2>YOUR CLAIMED (ERC-721)</h2>
+    <div id="claimed" class="grid"></div>
+    <hr class="sep">
+  </div>
 
   <h2>RECENT MINTS (LATEST 24)</h2>
   <div id="all" class="grid"></div>
@@ -371,8 +371,17 @@ async function faucetDrip() {
     refreshTotal();
   } catch (e) {
     const msg = e.data?.message || e.message || String(e);
-    if (msg.includes("CooldownActive")) setStatus("cooldown active — try again in an hour", "err");
-    else setStatus("drip failed: " + msg.slice(0,80), "err");
+    const data = e.data?.data || e.data || "";
+    // CooldownActive(uint256 nextAt) selector = 0xc1ab61a1
+    if (typeof data === "string" && data.startsWith("0xc1ab61a1")) {
+      const nextAt = parseInt(data.slice(10), 16);
+      const mins = Math.max(0, Math.ceil((nextAt - Date.now()/1000) / 60));
+      setStatus(`cooldown — try again in ${mins} min`, "err");
+    } else if (msg.includes("CooldownActive") || msg.includes("c1ab61a1")) {
+      setStatus("cooldown active — try again in ~1 hour", "err");
+    } else {
+      setStatus("drip failed: " + msg.slice(0,80), "err");
+    }
   } finally {
     $("btn-faucet").disabled = false;
   }
@@ -456,31 +465,27 @@ async function refreshBalance() {
 }
 
 async function refreshMine() {
-  if (!walletAddr) return;
-  $("mine").innerHTML = '<div class="empty" style="grid-column:1/-1;">loading inventory…</div>';
-  $("mine-empty").style.display = "none";
+  if (!walletAddr) { $("section-mine").style.display = "none"; return; }
   try {
-    // USlugg404 has inventoryOf(address) returning uint256[]
     const r = await ethCall(TOKEN, "0x" + SEL_INVENTORY_OF + encAddr(walletAddr));
     const ids = decUintArray(r).reverse();
+    if (ids.length === 0) { $("section-mine").style.display = "none"; return; }
     $("mine").innerHTML = "";
-    if (ids.length === 0) { $("mine-empty").style.display = "block"; return; }
     for (const id of ids) $("mine").appendChild(makeCard(id, TOKEN));
+    $("section-mine").style.display = "block";
   } catch (e) {
-    $("mine").innerHTML = `<div class="empty" style="grid-column:1/-1;color:var(--err);">load failed: ${e.message}</div>`;
+    // On error, hide the section silently rather than spam the page
+    $("section-mine").style.display = "none";
   }
 }
 
 async function refreshClaimed() {
-  if (!walletAddr) return;
-  $("claimed").innerHTML = "";
-  $("claimed-empty").style.display = "none";
+  if (!walletAddr) { $("section-claimed").style.display = "none"; return; }
   try {
-    // USluggClaimed has nextId() and ownerOf — scan latest 100
     const myAddr = walletAddr.toLowerCase();
     const nextR = await ethCall(CLAIMED, "0x" + SEL_CLAIMED_NEXTID);
     const next = Number(decUint(nextR));
-    if (next === 0) { $("claimed-empty").style.display = "block"; return; }
+    if (next === 0) { $("section-claimed").style.display = "none"; return; }
     const ids = [];
     const start = Math.max(0, next - 100);
     const CHUNK = 8;
@@ -494,10 +499,12 @@ async function refreshClaimed() {
       owners.forEach((r, i) => { if (r && decAddr(r).toLowerCase() === myAddr) ids.push(cursor + i); });
     }
     ids.sort((a,b) => b - a);
-    if (ids.length === 0) { $("claimed-empty").style.display = "block"; return; }
+    if (ids.length === 0) { $("section-claimed").style.display = "none"; return; }
+    $("claimed").innerHTML = "";
     for (const id of ids) $("claimed").appendChild(makeCard(id, CLAIMED));
+    $("section-claimed").style.display = "block";
   } catch (e) {
-    $("claimed").innerHTML = `<div class="empty" style="grid-column:1/-1;color:var(--err);">load failed: ${e.message}</div>`;
+    $("section-claimed").style.display = "none";
   }
 }
 
