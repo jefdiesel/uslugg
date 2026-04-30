@@ -14,7 +14,7 @@
   .badge { font-size:9px; letter-spacing:2px; color:#000; background:var(--accent); padding:3px 8px; border-radius:3px; }
   .sub { color:var(--muted); font-size:11px; margin:6px 0 16px; line-height:1.7; }
   .sub a { color:var(--accent); }
-  .bar { display:grid; grid-template-columns:auto 1fr auto auto; gap:8px; align-items:center; margin-bottom:8px; padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--card); }
+  .bar { display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; margin-bottom:8px; padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--card); }
   @media (max-width:640px) { .bar { grid-template-columns:1fr 1fr; } .bar > .info { grid-column:1/-1; } }
   .bar .info { color:var(--muted); font-size:11px; }
   .bar .info b { color:var(--fg); }
@@ -24,14 +24,13 @@
   button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
   button.ghost:hover:not(:disabled) { background:var(--accent); color:#000; }
   button.tiny { padding:4px 8px; font-size:9px; letter-spacing:1px; }
-  input[type=number] { background:#000; color:var(--fg); border:1px solid var(--border); padding:8px 12px; font:inherit; font-size:13px; border-radius:4px; width:80px; }
   .status { color:var(--muted); font-size:11px; min-height:1.5em; padding:0 4px; }
   .status.ok  { color:var(--accent); }
   .status.err { color:var(--err); }
   .status.pending { color:var(--warn); }
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:4px; overflow:hidden; }
-  .frame { aspect-ratio:1; background:#000; position:relative; }
+  .frame { aspect-ratio:1; background:#000; position:relative; cursor:pointer; }
   .frame iframe { width:100%; height:100%; border:0; display:block; }
   .frame .skeleton { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#333; font-size:9px; letter-spacing:2px; background:linear-gradient(45deg,#0a0a0a,#1a1a1a,#0a0a0a); animation:pulse 1.6s infinite; }
   @keyframes pulse { 0%,100% { opacity:0.5; } 50% { opacity:1; } }
@@ -43,36 +42,26 @@
   .addr { font-family:inherit; word-break:break-all; }
   hr.sep { border:0; border-top:1px solid var(--border); margin:24px 0; }
   h2 { font-size:14px; color:var(--muted); letter-spacing:2px; margin:0 0 12px; }
-  .info-box { padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--card); font-size:11px; color:var(--muted); line-height:1.7; }
-  .info-box b { color:var(--fg); }
-  details { background:var(--card); border:1px solid var(--border); border-radius:6px; padding:8px 12px; margin-top:8px; }
-  details summary { cursor:pointer; font-size:11px; color:var(--accent); letter-spacing:2px; }
-  details[open] summary { margin-bottom:8px; }
+  .info-box { padding:14px; border:1px solid var(--border); border-radius:6px; background:var(--card); font-size:13px; color:var(--fg); line-height:1.7; }
+  .info-box code { color:var(--accent); background:#0e0e0e; padding:1px 4px; border-radius:2px; }
+  .trait { background:#0a0a0a; border:1px solid var(--border); border-radius:4px; padding:6px 8px; }
+  .trait .k { color:var(--muted); font-size:9px; letter-spacing:1px; text-transform:uppercase; }
+  .trait .v { color:var(--accent); font-size:12px; margin-top:2px; word-break:break-word; }
+  @media (max-width:640px) { #modal > div > div:nth-child(2) { grid-template-columns:1fr; } #modal-frame { border-right:0; border-bottom:1px solid var(--border); } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>uSlugg</h1>
-    <span class="badge">SEPOLIA TESTNET</span>
+    <span class="badge">SEPOLIA TESTNET · v4 + CLAIM</span>
   </header>
   <p class="sub">
-    animated on-chain generative art · each mint = a fresh seed → a unique smear pattern that runs forever in your wallet.<br>
-    free to mint here — need Sepolia ETH? grab some from the <a href="https://sepoliafaucet.com/" target="_blank">Alchemy faucet</a> or <a href="https://sepolia-faucet.pk910.de/" target="_blank">PoW faucet</a>.
+    animated on-chain generative art · <b>404 hybrid token</b> with claim/unclaim · live testnet of the v4-launch architecture<br>
+    need Sepolia ETH? grab some from the <a href="https://sepoliafaucet.com/" target="_blank">Alchemy faucet</a> or <a href="https://sepolia-faucet.pk910.de/" target="_blank">PoW faucet</a>.
   </p>
 
-  <div class="bar">
-    <button id="btn-connect">Connect wallet</button>
-    <span class="info">
-      <span id="wallet-state">not connected</span>
-      &nbsp;·&nbsp; total minted: <b id="total">—</b> / 10000
-    </span>
-    <input id="mint-count" type="number" min="1" max="20" value="1" title="how many to mint (1-20)">
-    <button id="btn-mint" disabled>Mint</button>
-  </div>
-  <div class="status" id="status"></div>
-
-  <div class="info-box" style="margin-bottom:8px; border-left:4px solid var(--accent); font-size:14px; line-height:1.85; background:#0e0e0e;">
+  <div class="info-box" style="margin-bottom:8px; border-left:4px solid var(--accent); background:#0e0e0e;">
     <b style="color:var(--accent); font-size:18px; letter-spacing:2px; display:block; margin-bottom:8px;">WHAT IS THIS</b>
     <p style="margin:0 0 10px;">
       <b style="color:var(--accent);">uSlugg</b> is a <b>10,000-piece</b> animated, fully on-chain generative art collection.
@@ -82,21 +71,38 @@
       <b style="color:var(--accent);">FULLY ON-CHAIN.</b> The seed lives in contract storage. The <b>renderer</b> and the <b>~10KB Canvas2D JS runtime</b> are bytecode-stored. <code>tokenURI</code> returns an <code>animation_url</code> data URI — your wallet renders the animation live, no IPFS, no off-chain hosting.
     </p>
     <p style="margin:0 0 10px;">
-      <b style="color:var(--accent);">UNISWAP V4 HOOK MINT.</b> The real launch wires a v4 <code>afterSwap</code> hook to a 10k <b>404 hybrid</b> token (USLUG, 3 decimals). Every swap re-rolls the on-chain seed; whenever your USLUG balance crosses a whole-token threshold, an NFT mints with the current seed. <b>Selling burns the NFT</b>; the next buyer gets a fresh seed — so the same token unit cycles through different sluggs over its lifetime.
+      <b style="color:var(--accent);">404 HYBRID + V4 HOOK.</b> USLUG is an ERC-20 (3 decimals) joined to an ERC-721. Holding 1.000 USLUG = owning 1 Slugg NFT. On mainnet a v4 <code>afterSwap</code> hook re-rolls the on-chain seed every swap, so swap-buying USLUG mints fresh sluggs and selling burns them. <b>Selling and re-buying gives the next holder a brand-new slugg.</b>
     </p>
     <p style="margin:0 0 10px;">
-      <b style="color:var(--accent);">CLAIM &amp; UNCLAIM.</b> A <code>claim()</code> path lifts a slugg out of the 404 into a standalone ERC-721 (with EIP-2981 royalties) so it lists on OpenSea / Blur. Pay a small ETH fee to lift, pay another to unwrap.
+      <b style="color:var(--accent);">CLAIM &amp; UNCLAIM.</b> <code>claim()</code> lifts a slugg out of the 404 into a standalone <b>ERC-721 with EIP-2981 royalties</b> so it lists cleanly on OpenSea / Blur. <code>unclaim()</code> wraps it back. Small ETH fees on each side (testnet uses cheap fees).
     </p>
     <p style="margin:0; font-size:12px; color:var(--muted);">
-      ↓ <b style="color:var(--fg);">This page is the renderer-only beta</b> on Sepolia: anyone with testnet ETH can <code>mint()</code> directly to verify the art system works in real wallets. The full v4 + LP + claim stack ships next.
+      ↓ <b style="color:var(--fg);">This testnet uses a faucet</b> instead of a Uniswap pool — request 5 USLUG (= 5 sluggs) per hour. Mainnet uses real swap-driven mints.
     </p>
   </div>
 
+  <div class="bar" style="margin-top:14px;">
+    <button id="btn-connect">Connect wallet</button>
+    <span class="info">
+      <span id="wallet-state">not connected</span>
+      &nbsp;·&nbsp; your USLUG: <b id="usluk-balance">—</b>
+      &nbsp;·&nbsp; total minted: <b id="total">—</b> / 10000
+    </span>
+    <button id="btn-faucet" disabled>Get 5 USLUG</button>
+  </div>
+  <div class="status" id="status"></div>
+
   <hr class="sep">
 
-  <h2>YOUR SLUGGS</h2>
+  <h2>YOUR SLUGGS (404)</h2>
   <div id="mine" class="grid"></div>
-  <div id="mine-empty" class="empty">no sluggs yet — connect + mint above</div>
+  <div id="mine-empty" class="empty">no sluggs yet — connect + faucet</div>
+
+  <hr class="sep">
+
+  <h2>YOUR CLAIMED (ERC-721)</h2>
+  <div id="claimed" class="grid"></div>
+  <div id="claimed-empty" class="empty">nothing claimed yet — open a slugg → click CLAIM</div>
 
   <hr class="sep">
 
@@ -104,9 +110,11 @@
   <div id="all" class="grid"></div>
 
   <p class="sub" style="margin-top:32px; font-size:10px;">
-    Token: <a class="addr" target="_blank" id="link-token">—</a><br>
-    Renderer (live): <a class="addr" target="_blank" id="link-renderer">—</a><br>
-    Runtime (live): <a class="addr" target="_blank" id="link-runtime">—</a>
+    USlugg404: <a class="addr" target="_blank" id="link-token">—</a><br>
+    USluggClaimed: <a class="addr" target="_blank" id="link-claimed">—</a><br>
+    USluggFaucet: <a class="addr" target="_blank" id="link-faucet">—</a><br>
+    Renderer: <a class="addr" target="_blank" id="link-renderer">—</a><br>
+    Runtime: <a class="addr" target="_blank" id="link-runtime">—</a>
   </p>
 </div>
 
@@ -122,6 +130,7 @@
       <div style="padding:18px;">
         <div style="font-size:10px; color:var(--muted); letter-spacing:2px; margin-bottom:8px;">TRAITS</div>
         <div id="modal-traits" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:18px;"></div>
+        <div id="modal-action" style="display:flex; gap:8px; margin-bottom:14px;"></div>
         <div style="font-size:10px; color:var(--muted); letter-spacing:2px; margin-bottom:8px;">LINKS</div>
         <div id="modal-links" style="display:flex; flex-direction:column; gap:6px; font-size:11px;"></div>
         <div style="font-size:10px; color:var(--muted); letter-spacing:2px; margin:18px 0 8px;">KEY</div>
@@ -130,29 +139,36 @@
     </div>
   </div>
 </div>
-<style>
-  .trait { background:#0a0a0a; border:1px solid var(--border); border-radius:4px; padding:6px 8px; }
-  .trait .k { color:var(--muted); font-size:9px; letter-spacing:1px; text-transform:uppercase; }
-  .trait .v { color:var(--accent); font-size:12px; margin-top:2px; word-break:break-word; }
-  @media (max-width:640px) { #modal > div > div:nth-child(2) { grid-template-columns:1fr; } #modal-frame { border-right:0; border-bottom:1px solid var(--border); } }
-</style>
 
 <script>
 const CHAIN          = "eth-sepolia";
 const CHAIN_ID_HEX   = "0xaa36a7";
-const TOKEN          = "0xef27007372797Fceb6a5Af85a77b83dD644f2A32";
+const TOKEN          = "0xf82E4315846AeC304fc0f6822c12706806116F16"; // USlugg404
+const CLAIMED        = "0x9649e2F3365F15cf7feBaf888C21f9A579E70cfe"; // USluggClaimed
+const FAUCET         = "0x8e543A1a8E509f91b868218dAE284c18c4570779"; // USluggFaucet
+const RENDERER_DEFAULT = "0x5302D742b7d6e00c25a2Cd77e3B31308aC2Eb13C";
+const RUNTIME_DEFAULT  = "0xA908a5f52D4D6b7ba10023E3cfc3C8539A0e8f08";
+const TOKENS_PER_SLUGG = 1000n;  // 3 decimals → 1.000 USLUG = 1 NFT
 
-const SEL_MINT        = "a0712d68";
-const SEL_BALANCEOF   = "70a08231";
-const SEL_OWNEROF     = "6352211e";
-const SEL_TOKENURI    = "c87b56dd";
-const SEL_TOTALSUPPLY = "18160ddd";
-const SEL_RENDERER    = "8ada6b0f";
-const SEL_RUNTIME     = "54d75aa6";
+const SEL_BALANCEOF      = "70a08231"; // balanceOf(address)
+const SEL_OWNEROF        = "6352211e"; // ownerOf(uint256)
+const SEL_TOKENURI       = "c87b56dd"; // tokenURI(uint256)
+const SEL_NEXTSLUGGID    = "4cb179b0"; // nextSluggId()
+const SEL_INVENTORY_OF   = "7eaebb15"; // inventoryOf(address)
+const SEL_RENDERER       = "8ada6b0f";
+const SEL_RUNTIME        = "54d75aa6";
+const SEL_DRIP           = "9f678cca"; // drip()
+const SEL_CLAIM          = "379607f5"; // claim(uint256)
+const SEL_UNCLAIM        = "4b6a5e13"; // unclaim(uint256)
+const SEL_CLAIM_FEE      = "9596fd4d"; // claimFeeWei()
+const SEL_UNCLAIM_FEE    = "1f17f043"; // unclaimFeeWei()
+const SEL_NEXT_REQUEST   = "e9439b13"; // nextRequestAt(address)
+const SEL_CLAIMED_NEXTID = "61b8ce8c"; // nextId() on USluggClaimed
 
 const $ = id => document.getElementById(id);
 let walletAddr = null;
-const renderedIds = new Set();   // dedup across mine + all sections
+let claimFeeCached = null;
+let unclaimFeeCached = null;
 
 // ---------- RPC ----------
 async function rpc(method, params) {
@@ -166,9 +182,18 @@ async function rpc(method, params) {
 }
 function ethCall(to, data) { return rpc("eth_call", [{ to, data }, "latest"]); }
 function encU256(n) { return BigInt(n).toString(16).padStart(64, "0"); }
+function encAddr(a) { return a.toLowerCase().replace(/^0x/, "").padStart(64, "0"); }
 function decUint(hex) { return BigInt(hex); }
 function decAddr(hex) { return "0x" + hex.slice(-40); }
-
+function decUintArray(hex) {
+  if (hex.startsWith("0x")) hex = hex.slice(2);
+  const len = parseInt(hex.slice(64, 128), 16);
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    out.push(Number(BigInt("0x" + hex.slice(128 + i*64, 128 + i*64 + 64))));
+  }
+  return out;
+}
 function decodeString(hex) {
   if (hex.startsWith("0x")) hex = hex.slice(2);
   const len = parseInt(hex.slice(64, 128), 16);
@@ -177,24 +202,35 @@ function decodeString(hex) {
   for (let i = 0; i < len; i++) out[i] = parseInt(dataHex.slice(i*2, i*2+2), 16);
   return new TextDecoder("utf-8").decode(out);
 }
-
 function parseTokenURI(uri) {
   if (uri.startsWith("data:application/json;utf8,")) return JSON.parse(uri.slice(27));
   if (uri.startsWith("data:application/json;base64,")) return JSON.parse(atob(uri.slice(29)));
   throw new Error("bad uri");
 }
+function fmt(amount, decimals = 3) {
+  const d = BigInt(10) ** BigInt(decimals);
+  const whole = amount / d;
+  const frac = amount % d;
+  if (frac === 0n) return whole.toString();
+  return `${whole}.${frac.toString().padStart(decimals, "0").replace(/0+$/, "")}`;
+}
 
 // ---------- TRAIT DECODER ----------
-// Mirrors USluggRuntime's bit-stream decode. Pulls user-facing traits from a key.
 const PATTERNS = ['noise','random-blocks','checkerboard','stripes','dashes','dots','diagonal-stripes'];
 const THEMES   = ['cyber','sunset','noir','pastel','ocean','acid'];
-const DIRS     = ['→','↘','↓','↙','←','↖','↑','↗'];
+const THEME_DATA = {
+  cyber:  [0, 5, 30, 180, 185, 215],
+  sunset: [78, 180, 192, 196, 202, 213],
+  noir:   [0, 43, 86, 129, 172, 215],
+  pastel: [202, 167, 142, 137, 213, 179],
+  ocean:  [2, 10, 21, 57, 101, 179],
+  acid:   [5, 30, 35, 175, 180, 185],
+};
 function paletteName(idx) {
   const r = Math.floor(idx/36), g = Math.floor((idx%36)/6), bl = idx%6;
   const hex = ((r*51) << 16 | (g*51) << 8 | (bl*51)).toString(16).padStart(6,'0');
   return '#' + hex.toUpperCase();
 }
-
 function decodeTraits(keyHex) {
   let r = BigInt(keyHex);
   const b = (n) => { const v = Number(r & ((1n<<BigInt(n))-1n)); r >>= BigInt(n); return v; };
@@ -207,16 +243,12 @@ function decodeTraits(keyHex) {
   const themed = b(2) === 0;
   const themeIdx = b(3) % THEMES.length;
   const themeName = themed ? THEMES[themeIdx] : null;
-  // skip past split/cross bits to reach panel 0
   const rareSplit = b(4) === 0;
   if (rareSplit) { b(1); b(3); } else { b(7); }
-  b(1); b(1); b(6); // crossAxis, splitSide, sp2
+  b(1); b(1); b(6);
   const unified = !themed && b(7) === 0;
-  // We don't replicate every bit — just extract panel patterns/colors which need
-  // the same bit positions. Simulate channel pickers for accuracy.
   const cCh = (fc) => { const t = b(4); if (t < 14) return fc < 3 ? (4 + b(1)) : b(1); return Math.max(0, Math.min(5, fc + (b(1) ? 2 : -2))); };
   const pickBG = (f) => { const fR = Math.floor(f/36), fG = Math.floor((f%36)/6), fB = f%6; return cCh(fR)*36 + cCh(fG)*6 + cCh(fB); };
-  // Panel 0
   let fg0, bg0;
   if (themed) {
     fg0 = THEME_DATA[themeName][b(3) % 3];
@@ -226,55 +258,33 @@ function decodeTraits(keyHex) {
     bg0 = pickBG(fg0);
   }
   const pat0 = b(3) % 7;
-  // Skip cellSize/speed/smear/trail/decay bits roughly to reach panel 1's pattern
-  // (For simplicity we only surface FG/BG and pattern per panel — high-signal traits.)
-  const traits = {
+  return {
     monolith, mirror, themed, themeName, cnt, unified,
     orientation: cnt > 1 ? (ori ? 'vertical' : 'horizontal') : 'full',
     panel0: { pattern: PATTERNS[pat0], fg: paletteName(fg0), bg: paletteName(bg0) },
-    rare: monolith || (cnt === 1 && !monolith) || (cnt === 3) || mirror || unified,
-    rarityTags: [
-      monolith && 'MONOLITH',
-      cnt === 1 && !monolith && '1-PANEL',
-      cnt === 3 && '3-PANEL',
-      mirror && 'MIRROR',
-      unified && 'UNIFIED',
-      themed && `THEMED (${themeName})`,
-    ].filter(Boolean),
   };
-  return traits;
 }
 
-const THEME_DATA = {
-  cyber:  [0, 5, 30, 180, 185, 215],
-  sunset: [78, 180, 192, 196, 202, 213],
-  noir:   [0, 43, 86, 129, 172, 215],
-  pastel: [202, 167, 142, 137, 213, 179],
-  ocean:  [2, 10, 21, 57, 101, 179],
-  acid:   [5, 30, 35, 175, 180, 185],
-};
-
-// ---------- Lazy-load iframe via IntersectionObserver ----------
-// Cards stay as skeleton placeholders until visible — first 50 mints don't
-// crash mobile, no animations chew CPU off-screen.
+// ---------- LAZY LOAD CARDS ----------
 const lazyObserver = new IntersectionObserver((entries) => {
   for (const e of entries) {
     if (e.isIntersecting) {
       const card = e.target;
       const id = Number(card.dataset.id);
+      const contract = card.dataset.contract;
       if (!card.dataset.loaded) {
         card.dataset.loaded = "1";
-        loadSluggInto(card, id);
+        loadSluggInto(card, id, contract);
       }
     }
   }
 }, { rootMargin: "200px" });
 
-async function loadSluggInto(card, id) {
+async function loadSluggInto(card, id, contract) {
   const frame = card.querySelector(".frame");
   try {
     const data = "0x" + SEL_TOKENURI + encU256(id);
-    const raw = await ethCall(TOKEN, data);
+    const raw = await ethCall(contract, data);
     const meta = parseTokenURI(decodeString(raw));
     if (meta.animation_url && meta.animation_url.startsWith("data:text/html;utf8,")) {
       frame.innerHTML = '';
@@ -290,14 +300,16 @@ async function loadSluggInto(card, id) {
   }
 }
 
-function makeCard(id) {
+function makeCard(id, contract) {
+  const isClaimed = contract === CLAIMED;
   const card = document.createElement("div");
   card.className = "card";
   card.dataset.id = id;
+  card.dataset.contract = contract;
   card.innerHTML = `
     <div class="lbl">
-      <span class="copy-id" title="click to copy" data-copy="${id}" style="cursor:pointer;">#${id}</span>
-      <a href="#" class="open-item" data-id="${id}">view ↗</a>
+      <span class="copy-id" title="click to copy" data-copy="${id}" style="cursor:pointer;">${isClaimed ? '🏷' : ''} #${id}</span>
+      <a href="#" class="open-item">view ↗</a>
     </div>
     <div class="frame"><div class="skeleton">slugg #${id}</div></div>
   `;
@@ -308,27 +320,253 @@ function makeCard(id) {
     e.target.textContent = "copied ✓";
     setTimeout(() => { e.target.textContent = orig; }, 800);
   };
-  card.querySelector(".open-item").onclick = (e) => { e.preventDefault(); openItem(id); };
-  // Clicking the frame also opens the item
-  card.querySelector(".frame").style.cursor = "pointer";
-  card.querySelector(".frame").onclick = () => openItem(id);
+  card.querySelector(".open-item").onclick = (e) => { e.preventDefault(); openItem(id, contract); };
+  card.querySelector(".frame").onclick = () => openItem(id, contract);
   lazyObserver.observe(card);
   return card;
 }
 
+// ---------- WALLET ----------
+async function connect() {
+  if (!window.ethereum) { setStatus("install MetaMask to interact", "err"); return; }
+  try {
+    const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    walletAddr = accounts[0];
+    const chainId = await window.ethereum.request({ method: "eth_chainId" });
+    if (chainId !== CHAIN_ID_HEX) {
+      try { await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: CHAIN_ID_HEX }] }); }
+      catch (e) { setStatus("wrong chain — switch to Sepolia", "err"); return; }
+    }
+    $("wallet-state").innerHTML = `connected: <b>${walletAddr.slice(0,6)}…${walletAddr.slice(-4)}</b> <button class="tiny ghost" onclick="navigator.clipboard.writeText('${walletAddr}')">copy</button>`;
+    $("btn-connect").textContent = "Disconnect";
+    $("btn-connect").onclick = () => { walletAddr = null; location.reload(); };
+    $("btn-faucet").disabled = false;
+    setStatus("ready", "ok");
+    refreshBalance();
+    refreshMine();
+    refreshClaimed();
+  } catch (e) { setStatus("connect failed: " + e.message, "err"); }
+}
+
+// ---------- FAUCET ----------
+async function faucetDrip() {
+  if (!walletAddr) { setStatus("connect first", "err"); return; }
+  setStatus("dripping…", "pending");
+  $("btn-faucet").disabled = true;
+  try {
+    const txHash = await window.ethereum.request({
+      method: "eth_sendTransaction",
+      params: [{ from: walletAddr, to: FAUCET, data: "0x" + SEL_DRIP }],
+    });
+    setStatus(`tx ${txHash.slice(0,12)}… waiting`, "pending");
+    await waitReceipt(txHash);
+    setStatus(`got 5 USLUG ✓ (5 sluggs minted)`, "ok");
+    refreshBalance();
+    refreshMine();
+    refreshAll();
+    refreshTotal();
+  } catch (e) {
+    const msg = e.data?.message || e.message || String(e);
+    if (msg.includes("CooldownActive")) setStatus("cooldown active — try again in an hour", "err");
+    else setStatus("drip failed: " + msg.slice(0,80), "err");
+  } finally {
+    $("btn-faucet").disabled = false;
+  }
+}
+
+// ---------- CLAIM / UNCLAIM ----------
+async function ensureFees() {
+  if (claimFeeCached === null) {
+    const r1 = await ethCall(TOKEN, "0x" + SEL_CLAIM_FEE);
+    claimFeeCached = decUint(r1);
+  }
+  if (unclaimFeeCached === null) {
+    const r2 = await ethCall(TOKEN, "0x" + SEL_UNCLAIM_FEE);
+    unclaimFeeCached = decUint(r2);
+  }
+  return { claim: claimFeeCached, unclaim: unclaimFeeCached };
+}
+
+async function claim(id) {
+  if (!walletAddr) return;
+  const fees = await ensureFees();
+  setStatus(`claiming #${id}…`, "pending");
+  try {
+    const txHash = await window.ethereum.request({
+      method: "eth_sendTransaction",
+      params: [{ from: walletAddr, to: TOKEN, data: "0x" + SEL_CLAIM + encU256(id), value: "0x" + fees.claim.toString(16) }],
+    });
+    setStatus(`claim tx ${txHash.slice(0,12)}…`, "pending");
+    await waitReceipt(txHash);
+    setStatus(`#${id} claimed ✓ now an ERC-721`, "ok");
+    closeModal();
+    refreshBalance(); refreshMine(); refreshClaimed();
+  } catch (e) {
+    setStatus("claim failed: " + (e.data?.message || e.message).slice(0,80), "err");
+  }
+}
+
+async function unclaim(id) {
+  if (!walletAddr) return;
+  const fees = await ensureFees();
+  setStatus(`unclaiming #${id}…`, "pending");
+  try {
+    const txHash = await window.ethereum.request({
+      method: "eth_sendTransaction",
+      params: [{ from: walletAddr, to: TOKEN, data: "0x" + SEL_UNCLAIM + encU256(id), value: "0x" + fees.unclaim.toString(16) }],
+    });
+    setStatus(`unclaim tx ${txHash.slice(0,12)}…`, "pending");
+    await waitReceipt(txHash);
+    setStatus(`#${id} unclaimed ✓ back to 404`, "ok");
+    closeModal();
+    refreshBalance(); refreshMine(); refreshClaimed();
+  } catch (e) {
+    setStatus("unclaim failed: " + (e.data?.message || e.message).slice(0,80), "err");
+  }
+}
+
+async function waitReceipt(hash) {
+  for (let i = 0; i < 60; i++) {
+    const r = await rpc("eth_getTransactionReceipt", [hash]).catch(() => null);
+    if (r && r.blockNumber) return r.status === "0x1";
+    await new Promise(res => setTimeout(res, 2000));
+  }
+  throw new Error("receipt timeout");
+}
+
+// ---------- REFRESH ----------
+async function refreshTotal() {
+  try {
+    const r = await ethCall(TOKEN, "0x" + SEL_NEXTSLUGGID);
+    $("total").textContent = decUint(r).toString();
+  } catch { $("total").textContent = "?"; }
+}
+
+async function refreshBalance() {
+  if (!walletAddr) return;
+  try {
+    const r = await ethCall(TOKEN, "0x" + SEL_BALANCEOF + encAddr(walletAddr));
+    const bal = decUint(r);
+    $("usluk-balance").textContent = fmt(bal);
+  } catch { $("usluk-balance").textContent = "?"; }
+}
+
+async function refreshMine() {
+  if (!walletAddr) return;
+  $("mine").innerHTML = '<div class="empty" style="grid-column:1/-1;">loading inventory…</div>';
+  $("mine-empty").style.display = "none";
+  try {
+    // USlugg404 has inventoryOf(address) returning uint256[]
+    const r = await ethCall(TOKEN, "0x" + SEL_INVENTORY_OF + encAddr(walletAddr));
+    const ids = decUintArray(r).reverse();
+    $("mine").innerHTML = "";
+    if (ids.length === 0) { $("mine-empty").style.display = "block"; return; }
+    for (const id of ids) $("mine").appendChild(makeCard(id, TOKEN));
+  } catch (e) {
+    $("mine").innerHTML = `<div class="empty" style="grid-column:1/-1;color:var(--err);">load failed: ${e.message}</div>`;
+  }
+}
+
+async function refreshClaimed() {
+  if (!walletAddr) return;
+  $("claimed").innerHTML = "";
+  $("claimed-empty").style.display = "none";
+  try {
+    // USluggClaimed has nextId() and ownerOf — scan latest 100
+    const myAddr = walletAddr.toLowerCase();
+    const nextR = await ethCall(CLAIMED, "0x" + SEL_CLAIMED_NEXTID);
+    const next = Number(decUint(nextR));
+    if (next === 0) { $("claimed-empty").style.display = "block"; return; }
+    const ids = [];
+    const start = Math.max(0, next - 100);
+    const CHUNK = 8;
+    for (let cursor = start; cursor < next; cursor += CHUNK) {
+      const end = Math.min(next, cursor + CHUNK);
+      const owners = await Promise.all(
+        Array.from({length: end - cursor}, (_, i) =>
+          ethCall(CLAIMED, "0x" + SEL_OWNEROF + encU256(cursor + i)).catch(() => null)
+        )
+      );
+      owners.forEach((r, i) => { if (r && decAddr(r).toLowerCase() === myAddr) ids.push(cursor + i); });
+    }
+    ids.sort((a,b) => b - a);
+    if (ids.length === 0) { $("claimed-empty").style.display = "block"; return; }
+    for (const id of ids) $("claimed").appendChild(makeCard(id, CLAIMED));
+  } catch (e) {
+    $("claimed").innerHTML = `<div class="empty" style="grid-column:1/-1;color:var(--err);">load failed: ${e.message}</div>`;
+  }
+}
+
+async function refreshAll() {
+  $("all").innerHTML = "";
+  try {
+    const totalRaw = await ethCall(TOKEN, "0x" + SEL_NEXTSLUGGID);
+    const total = Number(decUint(totalRaw));
+    if (total === 0) {
+      $("all").innerHTML = '<div class="empty" style="grid-column:1/-1;">no mints yet — use the faucet</div>';
+      return;
+    }
+    const start = Math.max(0, total - 24);
+    for (let id = total - 1; id >= start; id--) {
+      // Some 404 slots may be burnt — check ownerOf first
+      try {
+        const o = await ethCall(TOKEN, "0x" + SEL_OWNEROF + encU256(id));
+        if (decUint(o) !== 0n) $("all").appendChild(makeCard(id, TOKEN));
+      } catch {}
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function setStatus(msg, kind) {
+  const el = $("status");
+  el.textContent = msg;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+function setAddrLink(elId, addr, prefix) {
+  const el = $(elId);
+  el.href = `https://sepolia.etherscan.io/address/${addr}`;
+  el.textContent = addr;
+  el.title = "click to copy";
+  el.style.cursor = "copy";
+  el.onclick = (e) => {
+    e.preventDefault();
+    navigator.clipboard.writeText(addr);
+    const orig = el.textContent;
+    el.textContent = "copied ✓";
+    setTimeout(() => { el.textContent = orig; }, 800);
+  };
+}
+
+async function refreshActiveAddresses() {
+  setAddrLink("link-token", TOKEN);
+  setAddrLink("link-claimed", CLAIMED);
+  setAddrLink("link-faucet", FAUCET);
+  try {
+    const r1 = await ethCall(TOKEN, "0x" + SEL_RENDERER);
+    setAddrLink("link-renderer", decAddr(r1));
+    const r2 = await ethCall(decAddr(r1), "0x" + SEL_RUNTIME);
+    setAddrLink("link-runtime", decAddr(r2));
+  } catch (e) {
+    setAddrLink("link-renderer", RENDERER_DEFAULT);
+    setAddrLink("link-runtime", RUNTIME_DEFAULT);
+  }
+}
+
 // ---------- ITEM VIEW MODAL ----------
-async function openItem(id) {
+async function openItem(id, contract) {
   $("modal").style.display = "block";
-  $("modal-title").textContent = `SLUGG #${id}`;
+  const isClaimed = contract === CLAIMED;
+  $("modal-title").textContent = `${isClaimed ? "CLAIMED" : "SLUGG"} #${id}`;
   $("modal-frame").innerHTML = '<div class="skeleton" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#444;">loading…</div>';
   $("modal-traits").innerHTML = "";
   $("modal-key").textContent = "";
   $("modal-links").innerHTML = "";
+  $("modal-action").innerHTML = "";
   try {
     const data = "0x" + SEL_TOKENURI + encU256(id);
-    const raw = await ethCall(TOKEN, data);
+    const raw = await ethCall(contract, data);
     const meta = parseTokenURI(decodeString(raw));
-    // Animation
     if (meta.animation_url) {
       $("modal-frame").innerHTML = "";
       const iframe = document.createElement("iframe");
@@ -337,7 +575,6 @@ async function openItem(id) {
       iframe.srcdoc = meta.animation_url.slice("data:text/html;utf8,".length);
       $("modal-frame").appendChild(iframe);
     }
-    // Decode traits from the embedded KEY
     const keyMatch = (meta.animation_url || "").match(/window\.KEY=['"](0x[a-f0-9]+)['"]/);
     const key = keyMatch ? keyMatch[1] : null;
     if (key) {
@@ -353,8 +590,8 @@ async function openItem(id) {
         ["Panels", String(t.cnt)],
         ["Orientation", t.orientation],
         ["Pattern", t.panel0.pattern],
-        ["Foreground", `<span style="display:inline-block;width:10px;height:10px;background:${t.panel0.fg};margin-right:6px;border:1px solid #444;vertical-align:middle;"></span>${t.panel0.fg}`],
-        ["Background", `<span style="display:inline-block;width:10px;height:10px;background:${t.panel0.bg};margin-right:6px;border:1px solid #444;vertical-align:middle;"></span>${t.panel0.bg}`],
+        ["FG", `<span style="display:inline-block;width:10px;height:10px;background:${t.panel0.fg};margin-right:6px;border:1px solid #444;vertical-align:middle;"></span>${t.panel0.fg}`],
+        ["BG", `<span style="display:inline-block;width:10px;height:10px;background:${t.panel0.bg};margin-right:6px;border:1px solid #444;vertical-align:middle;"></span>${t.panel0.bg}`],
         ["Mirror", t.mirror ? "yes" : "no"],
         ["Theme", t.themed ? t.themeName : "none"],
         ["Unified", t.unified ? "yes" : "no"],
@@ -364,10 +601,22 @@ async function openItem(id) {
         `<div class="trait"><div class="k">${k}</div><div class="v">${v}</div></div>`
       ).join("");
     }
+    // Action buttons: claim (if 404) or unclaim (if claimed)
+    if (walletAddr && !isClaimed) {
+      const fees = await ensureFees();
+      const ethFee = Number(fees.claim) / 1e18;
+      $("modal-action").innerHTML = `<button onclick="claim(${id})">CLAIM → ERC-721 (${ethFee} ETH)</button>`;
+    } else if (walletAddr && isClaimed) {
+      const fees = await ensureFees();
+      const ethFee = Number(fees.unclaim) / 1e18;
+      $("modal-action").innerHTML = `<button onclick="unclaim(${id})">UNCLAIM → 404 (${ethFee} ETH)</button>`;
+    }
     // Links
+    const erscan = `https://sepolia.etherscan.io/token/${contract}?a=${id}`;
+    const opensea = `https://testnets.opensea.io/assets/sepolia/${contract}/${id}`;
     $("modal-links").innerHTML = `
-      <a href="https://sepolia.etherscan.io/token/${TOKEN}?a=${id}" target="_blank">view on etherscan ↗</a>
-      <a href="https://testnets.opensea.io/assets/sepolia/${TOKEN}/${id}" target="_blank">view on opensea (sepolia) ↗</a>
+      <a href="${erscan}" target="_blank">view on etherscan ↗</a>
+      <a href="${opensea}" target="_blank">view on opensea (sepolia) ↗</a>
     `;
   } catch (e) {
     $("modal-frame").innerHTML = `<div class="skeleton" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--err);">err: ${e.message}</div>`;
@@ -380,159 +629,13 @@ function closeModal() {
 }
 window.openItem = openItem;
 window.closeModal = closeModal;
+window.claim = claim;
+window.unclaim = unclaim;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 $("modal").onclick = (e) => { if (e.target === $("modal")) closeModal(); };
 
-// ---------- Wallet ----------
-async function connect() {
-  if (!window.ethereum) { setStatus("install MetaMask to mint", "err"); return; }
-  try {
-    const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-    walletAddr = accounts[0];
-    const chainId = await window.ethereum.request({ method: "eth_chainId" });
-    if (chainId !== CHAIN_ID_HEX) {
-      try {
-        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: CHAIN_ID_HEX }] });
-      } catch (e) { setStatus("wrong chain — switch to Sepolia", "err"); return; }
-    }
-    $("wallet-state").innerHTML = `connected: <b>${walletAddr.slice(0,6)}…${walletAddr.slice(-4)}</b> <button class="tiny ghost" onclick="navigator.clipboard.writeText('${walletAddr}')">copy</button>`;
-    $("btn-connect").textContent = "Disconnect";
-    $("btn-connect").onclick = () => { walletAddr = null; location.reload(); };
-    $("btn-mint").disabled = false;
-    setStatus("ready", "ok");
-    refreshMine();
-  } catch (e) { setStatus("connect failed: " + e.message, "err"); }
-}
-
-// ---------- Mint ----------
-async function mint() {
-  if (!walletAddr) { setStatus("connect first", "err"); return; }
-  const count = Math.max(1, Math.min(20, parseInt($("mint-count").value, 10) || 1));
-  const data = "0x" + SEL_MINT + encU256(count);
-  setStatus(`minting ${count}…`, "pending");
-  $("btn-mint").disabled = true;
-  try {
-    const txHash = await window.ethereum.request({
-      method: "eth_sendTransaction",
-      params: [{ from: walletAddr, to: TOKEN, data }],
-    });
-    setStatus(`tx sent: ${txHash.slice(0,12)}… waiting`, "pending");
-    await waitReceipt(txHash);
-    setStatus(`minted ${count} slugg${count>1?"s":""} ✓`, "ok");
-    renderedIds.clear();
-    refreshTotal();
-    await Promise.all([refreshAll(), refreshMine()]);
-  } catch (e) {
-    const msg = e.data?.message || e.message || String(e);
-    setStatus("mint failed: " + msg, "err");
-  } finally {
-    $("btn-mint").disabled = false;
-  }
-}
-
-async function waitReceipt(hash) {
-  for (let i = 0; i < 60; i++) {
-    const r = await rpc("eth_getTransactionReceipt", [hash]).catch(() => null);
-    if (r && r.blockNumber) return r.status === "0x1";
-    await new Promise(res => setTimeout(res, 2000));
-  }
-  throw new Error("receipt timeout");
-}
-
-// ---------- Refresh sections ----------
-async function refreshTotal() {
-  try {
-    const r = await ethCall(TOKEN, "0x" + SEL_TOTALSUPPLY);
-    $("total").textContent = decUint(r).toString();
-  } catch { $("total").textContent = "?"; }
-}
-
-function setAddrLink(elId, addr) {
-  const el = $(elId);
-  el.href = `https://sepolia.etherscan.io/address/${addr}`;
-  el.textContent = addr;
-  el.title = "click to copy";
-  el.style.cursor = "copy";
-  el.onclick = (e) => {
-    e.preventDefault();
-    navigator.clipboard.writeText(addr);
-    const orig = el.textContent;
-    el.textContent = "copied ✓ " + addr;
-    setTimeout(() => { el.textContent = orig; }, 800);
-  };
-}
-
-async function refreshActiveAddresses() {
-  try {
-    setAddrLink("link-token", TOKEN);
-    const r1 = await ethCall(TOKEN, "0x" + SEL_RENDERER);
-    setAddrLink("link-renderer", decAddr(r1));
-    const r2 = await ethCall(decAddr(r1), "0x" + SEL_RUNTIME);
-    setAddrLink("link-runtime", decAddr(r2));
-  } catch (e) { /* ignore */ }
-}
-
-async function refreshMine() {
-  if (!walletAddr) return;
-  $("mine").innerHTML = '<div class="empty" style="grid-column:1/-1;">scanning ownership…</div>';
-  $("mine-empty").style.display = "none";
-  try {
-    const totalRaw = await ethCall(TOKEN, "0x" + SEL_TOTALSUPPLY);
-    const total = Number(decUint(totalRaw));
-    if (total === 0) { $("mine").innerHTML = ""; $("mine-empty").style.display = "block"; return; }
-
-    // Chunked ownerOf scan: 8 in flight at a time. 200 simultaneous Alchemy
-    // calls can exceed CU rate, causing "rpc" errors. Chunked is reliable.
-    const myAddr = walletAddr.toLowerCase();
-    const start = Math.max(0, total - 200);
-    const ids = [];
-    const CHUNK = 8;
-    for (let cursor = start; cursor < total; cursor += CHUNK) {
-      const end = Math.min(total, cursor + CHUNK);
-      const owners = await Promise.all(
-        Array.from({length: end - cursor}, (_, i) =>
-          ethCall(TOKEN, "0x" + SEL_OWNEROF + encU256(cursor + i)).catch(() => null)
-        )
-      );
-      owners.forEach((r, i) => { if (r && decAddr(r).toLowerCase() === myAddr) ids.push(cursor + i); });
-    }
-    ids.sort((a,b) => b - a);
-
-    $("mine").innerHTML = "";
-    if (ids.length === 0) { $("mine-empty").style.display = "block"; return; }
-    for (const id of ids) {
-      $("mine").appendChild(makeCard(id));
-      renderedIds.add(id);
-    }
-  } catch (e) {
-    $("mine").innerHTML = `<div class="empty" style="grid-column:1/-1;color:var(--err);">scan failed: ${e.message}</div>`;
-  }
-}
-
-async function refreshAll() {
-  $("all").innerHTML = "";
-  try {
-    const totalRaw = await ethCall(TOKEN, "0x" + SEL_TOTALSUPPLY);
-    const total = Number(decUint(totalRaw));
-    if (total === 0) {
-      $("all").innerHTML = '<div class="empty" style="grid-column:1/-1;">no mints yet — be the first</div>';
-      return;
-    }
-    const start = Math.max(0, total - 24);
-    for (let id = total - 1; id >= start; id--) {
-      $("all").appendChild(makeCard(id));
-    }
-  } catch (e) { /* ignore */ }
-}
-
-function setStatus(msg, kind) {
-  const el = $("status");
-  el.textContent = msg;
-  el.className = "status" + (kind ? " " + kind : "");
-}
-
 $("btn-connect").onclick = connect;
-$("btn-mint").onclick = mint;
+$("btn-faucet").onclick = faucetDrip;
 
 (async function init() {
   refreshActiveAddresses();
