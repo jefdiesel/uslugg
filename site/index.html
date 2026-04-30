@@ -60,29 +60,31 @@
     <span class="badge">SEPOLIA TESTNET · v4 + CLAIM</span>
   </header>
   <p class="sub">
-    animated on-chain generative art · <b>404 hybrid token</b> with claim/unclaim · live testnet of the v4-launch architecture<br>
+    animated, fully on-chain generative art · ERC-20 + ERC-721 hybrid with claim/unclaim · live testnet of the v4-launch architecture<br>
     need Sepolia ETH? grab some from the <a href="https://sepoliafaucet.com/" target="_blank">Alchemy faucet</a> or <a href="https://sepolia-faucet.pk910.de/" target="_blank">PoW faucet</a>.
   </p>
 
-  <div class="info-box" style="margin-bottom:8px; border-left:4px solid var(--accent); background:#0e0e0e;">
-    <b style="color:var(--accent); font-size:18px; letter-spacing:2px; display:block; margin-bottom:8px;">WHAT IS THIS</b>
-    <p style="margin:0 0 10px;">
-      <b style="color:var(--accent);">uSlugg</b> is a <b>10,000-piece</b> animated, fully on-chain generative art collection.
-      Each slugg is <b>1–3 panels</b> of patterns (<b>noise · checkerboard · stripes · dashes · dots · diagonal · random-blocks</b>) that <b>smear</b> across a <b>Canvas2D</b> loop, fade, and re-emerge forever.
-    </p>
-    <p style="margin:0 0 10px;">
-      <b style="color:var(--accent);">FULLY ON-CHAIN.</b> The seed lives in contract storage. The <b>renderer</b> and the <b>~10KB Canvas2D JS runtime</b> are bytecode-stored. <code>tokenURI</code> returns an <code>animation_url</code> data URI — your wallet renders the animation live, no IPFS, no off-chain hosting.
-    </p>
-    <p style="margin:0 0 10px;">
-      <b style="color:var(--accent);">404 HYBRID + V4 HOOK.</b> USLUG is an ERC-20 (3 decimals) joined to an ERC-721. Holding 1.000 USLUG = owning 1 Slugg NFT. On mainnet a v4 <code>afterSwap</code> hook re-rolls the on-chain seed every swap, so swap-buying USLUG mints fresh sluggs and selling burns them. <b>Selling and re-buying gives the next holder a brand-new slugg.</b>
-    </p>
-    <p style="margin:0 0 10px;">
-      <b style="color:var(--accent);">CLAIM &amp; UNCLAIM.</b> <code>claim()</code> lifts a slugg out of the 404 into a standalone <b>ERC-721 with EIP-2981 royalties</b> so it lists cleanly on OpenSea / Blur. <code>unclaim()</code> wraps it back. Small ETH fees on each side (testnet uses cheap fees).
-    </p>
-    <p style="margin:0; font-size:12px; color:var(--muted);">
-      ↓ <b style="color:var(--fg);">This testnet uses a faucet</b> instead of a Uniswap pool — request 5 USLUG (= 5 sluggs) per hour. Mainnet uses real swap-driven mints.
-    </p>
-  </div>
+  <details class="info-box" style="margin-bottom:8px; border-left:4px solid var(--accent); background:#0e0e0e;">
+    <summary style="cursor:pointer; color:var(--accent); font-size:16px; letter-spacing:2px; font-weight:600;">WHAT IS THIS</summary>
+    <div style="margin-top:12px;">
+      <p style="margin:0 0 10px;">
+        <b style="color:var(--accent);">uSlugg</b> is a <b>10,000-piece</b> animated, fully on-chain generative art collection.
+        Each slugg is <b>1–3 panels</b> of patterns (<b>noise · checkerboard · stripes · dashes · dots · diagonal · random-blocks</b>) that <b>smear</b> across a <b>Canvas2D</b> loop, fade, and re-emerge forever.
+      </p>
+      <p style="margin:0 0 10px;">
+        <b style="color:var(--accent);">FULLY ON-CHAIN.</b> The seed lives in contract storage. The <b>renderer</b> and the <b>~10KB Canvas2D JS runtime</b> are bytecode-stored. <code>tokenURI</code> returns an <code>animation_url</code> data URI — your wallet renders the animation live, no IPFS, no off-chain hosting.
+      </p>
+      <p style="margin:0 0 10px;">
+        <b style="color:var(--accent);">ERC-20 + NFT TOKEN BOUND BY V4 HOOK.</b> USLUG is an ERC-20 (3 decimals) joined to a per-token NFT. Holding 1.000 USLUG = owning 1 Slugg. On mainnet a v4 <code>afterSwap</code> hook re-rolls the on-chain seed every swap, so swap-buying USLUG mints fresh sluggs and selling burns them. <b>Selling and re-buying gives the next holder a brand-new slugg.</b>
+      </p>
+      <p style="margin:0 0 10px;">
+        <b style="color:var(--accent);">CLAIM &amp; UNCLAIM.</b> <code>claim()</code> lifts a slugg into a standalone <b>ERC-721 with EIP-2981 royalties</b> so it lists cleanly on OpenSea / Blur. <code>unclaim()</code> wraps it back. Small ETH fees on each side (testnet uses cheap fees).
+      </p>
+      <p style="margin:0; font-size:12px; color:var(--muted);">
+        ↓ <b style="color:var(--fg);">Sepolia testnet has the full v4 stack deployed</b> — token, hook, claim. Pick how many sluggs to BUY, hit the button.
+      </p>
+    </div>
+  </details>
 
   <div class="bar" style="margin-top:14px;">
     <button id="btn-connect">Connect wallet</button>
@@ -91,7 +93,8 @@
       &nbsp;·&nbsp; your USLUG: <b id="usluk-balance">—</b>
       &nbsp;·&nbsp; total minted: <b id="total">—</b> / 10000
     </span>
-    <button id="btn-faucet" disabled>Get 5 USLUG</button>
+    <input id="mint-count" type="number" min="1" max="100" value="1" style="background:#000;color:var(--fg);border:1px solid var(--border);padding:8px 12px;font:inherit;border-radius:4px;width:80px;">
+    <button id="btn-mint" disabled>BUY</button>
   </div>
   <div class="status" id="status"></div>
 
@@ -115,7 +118,7 @@
   <p class="sub" style="margin-top:32px; font-size:10px;">
     USlugg404: <a class="addr" target="_blank" id="link-token">—</a><br>
     USluggClaimed: <a class="addr" target="_blank" id="link-claimed">—</a><br>
-    USluggFaucet: <a class="addr" target="_blank" id="link-faucet">—</a><br>
+    USluggMintHelper: <a class="addr" target="_blank" id="link-mint-helper">—</a><br>
     Renderer: <a class="addr" target="_blank" id="link-renderer">—</a><br>
     Runtime: <a class="addr" target="_blank" id="link-runtime">—</a>
   </p>
@@ -146,11 +149,9 @@
 <script>
 const CHAIN          = "eth-sepolia";
 const CHAIN_ID_HEX   = "0xaa36a7";
-const TOKEN          = "0xf82E4315846AeC304fc0f6822c12706806116F16"; // USlugg404
-const CLAIMED        = "0x9649e2F3365F15cf7feBaf888C21f9A579E70cfe"; // USluggClaimed
-const FAUCET         = "0x8e543A1a8E509f91b868218dAE284c18c4570779"; // USluggFaucet
-const RENDERER_DEFAULT = "0x5302D742b7d6e00c25a2Cd77e3B31308aC2Eb13C";
-const RUNTIME_DEFAULT  = "0xA908a5f52D4D6b7ba10023E3cfc3C8539A0e8f08";
+const TOKEN          = "0x4bA863eeD307c00eD3C09ff45d4733A21FFA17a4"; // USlugg404 (v4 stack)
+const CLAIMED        = "0xb4EEFF39DFe18329b6ba5D99e2Fd8f3C5632d1Ad"; // USluggClaimed
+const MINT_HELPER    = "0xf274E77145166dda3627a78994ac78BA7b0aA6b4"; // open-amount mint helper
 const TOKENS_PER_SLUGG = 1000n;  // 3 decimals → 1.000 USLUG = 1 NFT
 
 const SEL_BALANCEOF      = "70a08231"; // balanceOf(address)
@@ -160,12 +161,11 @@ const SEL_NEXTSLUGGID    = "4cb179b0"; // nextSluggId()
 const SEL_INVENTORY_OF   = "7eaebb15"; // inventoryOf(address)
 const SEL_RENDERER       = "8ada6b0f";
 const SEL_RUNTIME        = "54d75aa6";
-const SEL_DRIP           = "9f678cca"; // drip()
+const SEL_MINT_OPEN      = "a0712d68"; // mint(uint256) on USluggMintHelper
 const SEL_CLAIM          = "379607f5"; // claim(uint256)
 const SEL_UNCLAIM        = "4b6a5e13"; // unclaim(uint256)
 const SEL_CLAIM_FEE      = "9596fd4d"; // claimFeeWei()
 const SEL_UNCLAIM_FEE    = "1f17f043"; // unclaimFeeWei()
-const SEL_NEXT_REQUEST   = "e9439b13"; // nextRequestAt(address)
 const SEL_CLAIMED_NEXTID = "61b8ce8c"; // nextId() on USluggClaimed
 
 const $ = id => document.getElementById(id);
@@ -344,7 +344,7 @@ async function connect() {
     $("wallet-state").innerHTML = `connected: <b>${walletAddr.slice(0,6)}…${walletAddr.slice(-4)}</b> <button class="tiny ghost" onclick="navigator.clipboard.writeText('${walletAddr}')">copy</button>`;
     $("btn-connect").textContent = "Disconnect";
     $("btn-connect").onclick = () => { walletAddr = null; location.reload(); };
-    $("btn-faucet").disabled = false;
+    $("btn-mint").disabled = false;
     setStatus("ready", "ok");
     refreshBalance();
     refreshMine();
@@ -353,37 +353,29 @@ async function connect() {
 }
 
 // ---------- FAUCET ----------
-async function faucetDrip() {
+async function buySluggs() {
   if (!walletAddr) { setStatus("connect first", "err"); return; }
-  setStatus("dripping…", "pending");
-  $("btn-faucet").disabled = true;
+  const count = Math.max(1, Math.min(100, parseInt($("mint-count").value, 10) || 1));
+  setStatus(`buying ${count} slugg${count > 1 ? "s" : ""}…`, "pending");
+  $("btn-mint").disabled = true;
   try {
+    const data = "0x" + SEL_MINT_OPEN + BigInt(count).toString(16).padStart(64, "0");
     const txHash = await window.ethereum.request({
       method: "eth_sendTransaction",
-      params: [{ from: walletAddr, to: FAUCET, data: "0x" + SEL_DRIP }],
+      params: [{ from: walletAddr, to: MINT_HELPER, data }],
     });
     setStatus(`tx ${txHash.slice(0,12)}… waiting`, "pending");
     await waitReceipt(txHash);
-    setStatus(`got 5 USLUG ✓ (5 sluggs minted)`, "ok");
+    setStatus(`${count} slugg${count > 1 ? "s" : ""} minted ✓`, "ok");
     refreshBalance();
     refreshMine();
     refreshAll();
     refreshTotal();
   } catch (e) {
     const msg = e.data?.message || e.message || String(e);
-    const data = e.data?.data || e.data || "";
-    // CooldownActive(uint256 nextAt) selector = 0xc1ab61a1
-    if (typeof data === "string" && data.startsWith("0xc1ab61a1")) {
-      const nextAt = parseInt(data.slice(10), 16);
-      const mins = Math.max(0, Math.ceil((nextAt - Date.now()/1000) / 60));
-      setStatus(`cooldown — try again in ${mins} min`, "err");
-    } else if (msg.includes("CooldownActive") || msg.includes("c1ab61a1")) {
-      setStatus("cooldown active — try again in ~1 hour", "err");
-    } else {
-      setStatus("drip failed: " + msg.slice(0,80), "err");
-    }
+    setStatus("buy failed: " + msg.slice(0,80), "err");
   } finally {
-    $("btn-faucet").disabled = false;
+    $("btn-mint").disabled = false;
   }
 }
 
@@ -552,7 +544,7 @@ function setAddrLink(elId, addr, prefix) {
 async function refreshActiveAddresses() {
   setAddrLink("link-token", TOKEN);
   setAddrLink("link-claimed", CLAIMED);
-  setAddrLink("link-faucet", FAUCET);
+  setAddrLink("link-mint-helper", MINT_HELPER);
   try {
     const r1 = await ethCall(TOKEN, "0x" + SEL_RENDERER);
     setAddrLink("link-renderer", decAddr(r1));
@@ -646,7 +638,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal
 $("modal").onclick = (e) => { if (e.target === $("modal")) closeModal(); };
 
 $("btn-connect").onclick = connect;
-$("btn-faucet").onclick = faucetDrip;
+$("btn-mint").onclick = buySluggs;
 
 (async function init() {
   refreshActiveAddresses();
