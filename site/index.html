@@ -634,7 +634,7 @@ async function openItem(id, contract) {
       if (t.monolith) traits.unshift(["⚡ MONOLITH", "1-in-16k"]);
       $("modal-traits").innerHTML = traits.map(([k,v]) => {
         const rarity = rarityFor(k, v);
-        const rarityHtml = rarity ? `<div style="font-size:9px; color:#666; margin-top:2px;">${rarity}</div>` : "";
+        const rarityHtml = rarity ? `<div style="font-size:10px; color:var(--warn); margin-top:3px; font-weight:600;">${rarity}</div>` : "";
         return `<div class="trait"><div class="k">${k}</div><div class="v">${v}</div>${rarityHtml}</div>`;
       }).join("");
     }
