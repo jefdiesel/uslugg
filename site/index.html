@@ -531,6 +531,7 @@ async function refreshLIFO() {
 
     $("lifo-panel").style.display = "block";
     $("lifo-id").textContent = `#${targetId}`;
+    $("lifo-quote").textContent = ""; // quote only fetched when user clicks SELL
 
     // Mini animation preview
     const previewBox = $("lifo-preview");
@@ -548,29 +549,9 @@ async function refreshLIFO() {
       }
     } catch { /* ignore preview errors */ }
 
-    // Quote ETH out
-    $("lifo-quote").textContent = "quoting…";
-    try {
-      const allowR = await ethCall(TOKEN, "0xdd62ed3e" + encAddr(walletAddr) + encAddr(SWAP));
-      if (decUint(allowR) >= 1000n) {
-        const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800);
-        const data = "0xd3c9727c" + encU256(1000) + encU256(0) + deadline.toString(16).padStart(64, "0");
-        const qr = await rpc("eth_call", [{ to: SWAP, data, from: walletAddr }, "latest"]);
-        const ethOut = decUint(qr);
-        const ethDisplay = ethOut > 1_000_000_000_000_000n
-          ? `${(Number(ethOut) / 1e18).toFixed(6)} ETH`
-          : `${ethOut} wei`;
-        $("lifo-quote").textContent = `you'll receive ~${ethDisplay}`;
-      } else {
-        $("lifo-quote").innerHTML = `<span style="color:var(--warn);">first sell needs approve (2 txs)</span>`;
-      }
-    } catch {
-      $("lifo-quote").innerHTML = `<span style="color:var(--err);">quote failed</span>`;
-    }
-
     // Wire buttons
     $("lifo-sell").disabled = false;
-    $("lifo-sell").onclick = () => sellSlugg();  // opens the existing confirm dialog
+    $("lifo-sell").onclick = () => sellSlugg();
     $("lifo-protect").disabled = false;
     $("lifo-protect").textContent = `CLAIM TO PROTECT #${targetId}`;
     $("lifo-protect").onclick = () => claim(targetId);
