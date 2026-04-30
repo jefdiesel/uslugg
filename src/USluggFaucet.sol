@@ -61,9 +61,10 @@ contract USluggFaucet {
         emit Dripped(msg.sender, dripAmount);
     }
 
-    /// @notice View — when can `who` request again?
+    /// @notice View — when can `who` request again? Returns 0 if never requested.
     function nextRequestAt(address who) external view returns (uint256) {
         uint256 last = lastRequest[who];
-        return last == 0 ? 0 : last + cooldown;
+        if (last < 1) return 0;
+        return last + cooldown;
     }
 }

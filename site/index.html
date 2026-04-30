@@ -399,6 +399,9 @@ async function ensureFees() {
 
 async function claim(id) {
   if (!walletAddr) return;
+  const btn = document.querySelector("#modal-action button");
+  const origLabel = btn?.textContent || "";
+  if (btn) { btn.textContent = "CLAIMING…"; btn.disabled = true; }
   const fees = await ensureFees();
   setStatus(`claiming #${id}…`, "pending");
   try {
@@ -406,18 +409,23 @@ async function claim(id) {
       method: "eth_sendTransaction",
       params: [{ from: walletAddr, to: TOKEN, data: "0x" + SEL_CLAIM + encU256(id), value: "0x" + fees.claim.toString(16) }],
     });
+    if (btn) btn.textContent = "CONFIRMING…";
     setStatus(`claim tx ${txHash.slice(0,12)}…`, "pending");
     await waitReceipt(txHash);
     setStatus(`#${id} claimed ✓ now an ERC-721`, "ok");
     closeModal();
     refreshBalance(); refreshMine(); refreshClaimed();
   } catch (e) {
+    if (btn) { btn.textContent = origLabel; btn.disabled = false; }
     setStatus("claim failed: " + (e.data?.message || e.message).slice(0,80), "err");
   }
 }
 
 async function unclaim(id) {
   if (!walletAddr) return;
+  const btn = document.querySelector("#modal-action button");
+  const origLabel = btn?.textContent || "";
+  if (btn) { btn.textContent = "UNCLAIMING…"; btn.disabled = true; }
   const fees = await ensureFees();
   setStatus(`unclaiming #${id}…`, "pending");
   try {
@@ -425,12 +433,14 @@ async function unclaim(id) {
       method: "eth_sendTransaction",
       params: [{ from: walletAddr, to: TOKEN, data: "0x" + SEL_UNCLAIM + encU256(id), value: "0x" + fees.unclaim.toString(16) }],
     });
+    if (btn) btn.textContent = "CONFIRMING…";
     setStatus(`unclaim tx ${txHash.slice(0,12)}…`, "pending");
     await waitReceipt(txHash);
     setStatus(`#${id} unclaimed ✓ back to 404`, "ok");
     closeModal();
     refreshBalance(); refreshMine(); refreshClaimed();
   } catch (e) {
+    if (btn) { btn.textContent = origLabel; btn.disabled = false; }
     setStatus("unclaim failed: " + (e.data?.message || e.message).slice(0,80), "err");
   }
 }
@@ -594,6 +604,19 @@ async function openItem(id, contract) {
         setTimeout(() => { $("modal-key").textContent = o; }, 800);
       };
       const t = decodeTraits(key);
+      // Rarity % per trait value — derived from the runtime's bit distribution
+      const RARITY = {
+        Panels: { "1": "0.1%", "2": "93.7%", "3": "6.25%" },
+        Orientation: { "horizontal": "~50%", "vertical": "~50%", "full": "0.1%" },
+        Pattern: { "noise": "14.3%", "random-blocks": "14.3%", "checkerboard": "14.3%", "stripes": "14.3%", "dashes": "14.3%", "dots": "14.3%", "diagonal-stripes": "14.3%" },
+        Mirror: { "yes": "6.25%", "no": "93.75%" },
+        Theme: { "none": "75%", "cyber": "4.2%", "sunset": "4.2%", "noir": "4.2%", "pastel": "4.2%", "ocean": "4.2%", "acid": "4.2%" },
+        Unified: { "yes": "0.78%", "no": "99.2%" },
+      };
+      const rarityFor = (k, v) => {
+        const cleaned = String(v).split('<')[0].trim() || String(v);  // strip HTML for swatches
+        return (RARITY[k] && RARITY[k][cleaned]) || "";
+      };
       const traits = [
         ["Panels", String(t.cnt)],
         ["Orientation", t.orientation],
@@ -604,10 +627,12 @@ async function openItem(id, contract) {
         ["Theme", t.themed ? t.themeName : "none"],
         ["Unified", t.unified ? "yes" : "no"],
       ];
-      if (t.monolith) traits.unshift(["⚡ MONOLITH", "1-in-16k rare"]);
-      $("modal-traits").innerHTML = traits.map(([k,v]) =>
-        `<div class="trait"><div class="k">${k}</div><div class="v">${v}</div></div>`
-      ).join("");
+      if (t.monolith) traits.unshift(["⚡ MONOLITH", "1-in-16k"]);
+      $("modal-traits").innerHTML = traits.map(([k,v]) => {
+        const rarity = rarityFor(k, v);
+        const rarityHtml = rarity ? `<div style="font-size:9px; color:#666; margin-top:2px;">${rarity}</div>` : "";
+        return `<div class="trait"><div class="k">${k}</div><div class="v">${v}</div>${rarityHtml}</div>`;
+      }).join("");
     }
     // Action buttons: claim (if 404) or unclaim (if claimed)
     if (walletAddr && !isClaimed) {
@@ -619,13 +644,14 @@ async function openItem(id, contract) {
       const ethFee = Number(fees.unclaim) / 1e18;
       $("modal-action").innerHTML = `<button onclick="unclaim(${id})">UNCLAIM → 404 (${ethFee} ETH)</button>`;
     }
-    // Links
+    // Links — OpenSea only meaningful for CLAIMED (real ERC-721); 404 NFTs aren't indexed there
     const erscan = `https://sepolia.etherscan.io/token/${contract}?a=${id}`;
-    const opensea = `https://testnets.opensea.io/assets/sepolia/${contract}/${id}`;
-    $("modal-links").innerHTML = `
-      <a href="${erscan}" target="_blank">view on etherscan ↗</a>
-      <a href="${opensea}" target="_blank">view on opensea (sepolia) ↗</a>
-    `;
+    let links = `<a href="${erscan}" target="_blank">view on etherscan ↗</a>`;
+    if (isClaimed) {
+      const opensea = `https://testnets.opensea.io/assets/sepolia/${contract}/${id}`;
+      links += `<a href="${opensea}" target="_blank">view on opensea (sepolia) ↗</a>`;
+    }
+    $("modal-links").innerHTML = links;
   } catch (e) {
     $("modal-frame").innerHTML = `<div class="skeleton" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--err);">err: ${e.message}</div>`;
   }
