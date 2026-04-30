@@ -110,6 +110,33 @@
   </p>
 </div>
 
+<!-- ITEM VIEW MODAL -->
+<div id="modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:100; overflow-y:auto; padding:24px;">
+  <div style="max-width:780px; margin:0 auto; background:var(--card); border:1px solid var(--border); border-radius:8px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--border);">
+      <h2 id="modal-title" style="color:var(--accent); margin:0; font-size:18px; letter-spacing:2px;">SLUGG #—</h2>
+      <button class="ghost" onclick="closeModal()">CLOSE ✕</button>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0;">
+      <div id="modal-frame" style="aspect-ratio:1; background:#000; border-right:1px solid var(--border);"></div>
+      <div style="padding:18px;">
+        <div style="font-size:10px; color:var(--muted); letter-spacing:2px; margin-bottom:8px;">TRAITS</div>
+        <div id="modal-traits" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:18px;"></div>
+        <div style="font-size:10px; color:var(--muted); letter-spacing:2px; margin-bottom:8px;">LINKS</div>
+        <div id="modal-links" style="display:flex; flex-direction:column; gap:6px; font-size:11px;"></div>
+        <div style="font-size:10px; color:var(--muted); letter-spacing:2px; margin:18px 0 8px;">KEY</div>
+        <code id="modal-key" style="font-size:10px; color:var(--muted); word-break:break-all; cursor:copy;"></code>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+  .trait { background:#0a0a0a; border:1px solid var(--border); border-radius:4px; padding:6px 8px; }
+  .trait .k { color:var(--muted); font-size:9px; letter-spacing:1px; text-transform:uppercase; }
+  .trait .v { color:var(--accent); font-size:12px; margin-top:2px; word-break:break-word; }
+  @media (max-width:640px) { #modal > div > div:nth-child(2) { grid-template-columns:1fr; } #modal-frame { border-right:0; border-bottom:1px solid var(--border); } }
+</style>
+
 <script>
 const CHAIN          = "eth-sepolia";
 const CHAIN_ID_HEX   = "0xaa36a7";
@@ -157,6 +184,76 @@ function parseTokenURI(uri) {
   throw new Error("bad uri");
 }
 
+// ---------- TRAIT DECODER ----------
+// Mirrors USluggRuntime's bit-stream decode. Pulls user-facing traits from a key.
+const PATTERNS = ['noise','random-blocks','checkerboard','stripes','dashes','dots','diagonal-stripes'];
+const THEMES   = ['cyber','sunset','noir','pastel','ocean','acid'];
+const DIRS     = ['→','↘','↓','↙','←','↖','↑','↗'];
+function paletteName(idx) {
+  const r = Math.floor(idx/36), g = Math.floor((idx%36)/6), bl = idx%6;
+  const hex = ((r*51) << 16 | (g*51) << 8 | (bl*51)).toString(16).padStart(6,'0');
+  return '#' + hex.toUpperCase();
+}
+
+function decodeTraits(keyHex) {
+  let r = BigInt(keyHex);
+  const b = (n) => { const v = Number(r & ((1n<<BigInt(n))-1n)); r >>= BigInt(n); return v; };
+  const monolith = b(14) === 0;
+  const cntRoll = b(10);
+  const triRoll = b(4);
+  const cnt = monolith ? 1 : (cntRoll === 0 ? 1 : (triRoll === 0 ? 3 : 2));
+  const ori = b(1);
+  const mirror = cnt === 2 && b(4) === 0;
+  const themed = b(2) === 0;
+  const themeIdx = b(3) % THEMES.length;
+  const themeName = themed ? THEMES[themeIdx] : null;
+  // skip past split/cross bits to reach panel 0
+  const rareSplit = b(4) === 0;
+  if (rareSplit) { b(1); b(3); } else { b(7); }
+  b(1); b(1); b(6); // crossAxis, splitSide, sp2
+  const unified = !themed && b(7) === 0;
+  // We don't replicate every bit — just extract panel patterns/colors which need
+  // the same bit positions. Simulate channel pickers for accuracy.
+  const cCh = (fc) => { const t = b(4); if (t < 14) return fc < 3 ? (4 + b(1)) : b(1); return Math.max(0, Math.min(5, fc + (b(1) ? 2 : -2))); };
+  const pickBG = (f) => { const fR = Math.floor(f/36), fG = Math.floor((f%36)/6), fB = f%6; return cCh(fR)*36 + cCh(fG)*6 + cCh(fB); };
+  // Panel 0
+  let fg0, bg0;
+  if (themed) {
+    fg0 = THEME_DATA[themeName][b(3) % 3];
+    bg0 = THEME_DATA[themeName][3 + (b(3) % 3)];
+  } else {
+    fg0 = b(8) % 216;
+    bg0 = pickBG(fg0);
+  }
+  const pat0 = b(3) % 7;
+  // Skip cellSize/speed/smear/trail/decay bits roughly to reach panel 1's pattern
+  // (For simplicity we only surface FG/BG and pattern per panel — high-signal traits.)
+  const traits = {
+    monolith, mirror, themed, themeName, cnt, unified,
+    orientation: cnt > 1 ? (ori ? 'vertical' : 'horizontal') : 'full',
+    panel0: { pattern: PATTERNS[pat0], fg: paletteName(fg0), bg: paletteName(bg0) },
+    rare: monolith || (cnt === 1 && !monolith) || (cnt === 3) || mirror || unified,
+    rarityTags: [
+      monolith && 'MONOLITH',
+      cnt === 1 && !monolith && '1-PANEL',
+      cnt === 3 && '3-PANEL',
+      mirror && 'MIRROR',
+      unified && 'UNIFIED',
+      themed && `THEMED (${themeName})`,
+    ].filter(Boolean),
+  };
+  return traits;
+}
+
+const THEME_DATA = {
+  cyber:  [0, 5, 30, 180, 185, 215],
+  sunset: [78, 180, 192, 196, 202, 213],
+  noir:   [0, 43, 86, 129, 172, 215],
+  pastel: [202, 167, 142, 137, 213, 179],
+  ocean:  [2, 10, 21, 57, 101, 179],
+  acid:   [5, 30, 35, 175, 180, 185],
+};
+
 // ---------- Lazy-load iframe via IntersectionObserver ----------
 // Cards stay as skeleton placeholders until visible — first 50 mints don't
 // crash mobile, no animations chew CPU off-screen.
@@ -200,19 +297,91 @@ function makeCard(id) {
   card.innerHTML = `
     <div class="lbl">
       <span class="copy-id" title="click to copy" data-copy="${id}" style="cursor:pointer;">#${id}</span>
-      <a href="https://sepolia.etherscan.io/token/${TOKEN}?a=${id}" target="_blank">etherscan ↗</a>
+      <a href="#" class="open-item" data-id="${id}">view ↗</a>
     </div>
     <div class="frame"><div class="skeleton">slugg #${id}</div></div>
   `;
   card.querySelector(".copy-id").onclick = (e) => {
+    e.stopPropagation();
     navigator.clipboard.writeText(e.target.dataset.copy);
     const orig = e.target.textContent;
     e.target.textContent = "copied ✓";
     setTimeout(() => { e.target.textContent = orig; }, 800);
   };
+  card.querySelector(".open-item").onclick = (e) => { e.preventDefault(); openItem(id); };
+  // Clicking the frame also opens the item
+  card.querySelector(".frame").style.cursor = "pointer";
+  card.querySelector(".frame").onclick = () => openItem(id);
   lazyObserver.observe(card);
   return card;
 }
+
+// ---------- ITEM VIEW MODAL ----------
+async function openItem(id) {
+  $("modal").style.display = "block";
+  $("modal-title").textContent = `SLUGG #${id}`;
+  $("modal-frame").innerHTML = '<div class="skeleton" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#444;">loading…</div>';
+  $("modal-traits").innerHTML = "";
+  $("modal-key").textContent = "";
+  $("modal-links").innerHTML = "";
+  try {
+    const data = "0x" + SEL_TOKENURI + encU256(id);
+    const raw = await ethCall(TOKEN, data);
+    const meta = parseTokenURI(decodeString(raw));
+    // Animation
+    if (meta.animation_url) {
+      $("modal-frame").innerHTML = "";
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute("sandbox", "allow-scripts");
+      iframe.style.cssText = "width:100%;height:100%;border:0;display:block;";
+      iframe.srcdoc = meta.animation_url.slice("data:text/html;utf8,".length);
+      $("modal-frame").appendChild(iframe);
+    }
+    // Decode traits from the embedded KEY
+    const keyMatch = (meta.animation_url || "").match(/window\.KEY=['"](0x[a-f0-9]+)['"]/);
+    const key = keyMatch ? keyMatch[1] : null;
+    if (key) {
+      $("modal-key").textContent = key;
+      $("modal-key").onclick = () => {
+        navigator.clipboard.writeText(key);
+        const o = $("modal-key").textContent;
+        $("modal-key").textContent = "copied ✓";
+        setTimeout(() => { $("modal-key").textContent = o; }, 800);
+      };
+      const t = decodeTraits(key);
+      const traits = [
+        ["Panels", String(t.cnt)],
+        ["Orientation", t.orientation],
+        ["Pattern", t.panel0.pattern],
+        ["Foreground", `<span style="display:inline-block;width:10px;height:10px;background:${t.panel0.fg};margin-right:6px;border:1px solid #444;vertical-align:middle;"></span>${t.panel0.fg}`],
+        ["Background", `<span style="display:inline-block;width:10px;height:10px;background:${t.panel0.bg};margin-right:6px;border:1px solid #444;vertical-align:middle;"></span>${t.panel0.bg}`],
+        ["Mirror", t.mirror ? "yes" : "no"],
+        ["Theme", t.themed ? t.themeName : "none"],
+        ["Unified", t.unified ? "yes" : "no"],
+      ];
+      if (t.monolith) traits.unshift(["⚡ MONOLITH", "1-in-16k rare"]);
+      $("modal-traits").innerHTML = traits.map(([k,v]) =>
+        `<div class="trait"><div class="k">${k}</div><div class="v">${v}</div></div>`
+      ).join("");
+    }
+    // Links
+    $("modal-links").innerHTML = `
+      <a href="https://sepolia.etherscan.io/token/${TOKEN}?a=${id}" target="_blank">view on etherscan ↗</a>
+      <a href="https://testnets.opensea.io/assets/sepolia/${TOKEN}/${id}" target="_blank">view on opensea (sepolia) ↗</a>
+    `;
+  } catch (e) {
+    $("modal-frame").innerHTML = `<div class="skeleton" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--err);">err: ${e.message}</div>`;
+  }
+}
+
+function closeModal() {
+  $("modal").style.display = "none";
+  $("modal-frame").innerHTML = "";
+}
+window.openItem = openItem;
+window.closeModal = closeModal;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+$("modal").onclick = (e) => { if (e.target === $("modal")) closeModal(); };
 
 // ---------- Wallet ----------
 async function connect() {
