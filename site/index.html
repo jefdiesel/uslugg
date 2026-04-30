@@ -136,17 +136,37 @@
   <div style="max-width:520px; margin:8vh auto 0; background:var(--card); border:2px solid var(--err); border-radius:8px; padding:24px;">
     <h2 style="color:var(--err); margin:0 0 14px; font-size:18px; letter-spacing:2px;">⚠ SELL IS LIFO — READ THIS</h2>
     <div style="font-size:13px; line-height:1.7; color:var(--fg);">
-      <p style="margin:0 0 12px;">The 404 token sells in <b>last-in, first-out order</b>. Selling 1 slugg burns the <b>most-recently-minted</b> slugg in your inventory — <b>not necessarily the one you clicked</b>.</p>
-      <p style="margin:0 0 12px;">If you want to sell <b>this specific slugg</b>, hit <b>CANCEL</b> and click <b>CLAIM</b> instead. Claim lifts a specific id into a standalone ERC-721 you can sell directly on OpenSea / Blur. Claim is NOT LIFO — it picks the exact id.</p>
-      <div style="margin:0 0 14px; padding:10px; background:#1a0a0a; border:1px solid var(--err); border-radius:4px;">
-        <div style="font-size:10px; color:var(--muted); letter-spacing:2px;">WILL BURN</div>
-        <div id="sell-confirm-target" style="font-size:14px; color:var(--err); margin-top:4px;">—</div>
+      <p style="margin:0 0 14px;">The hybrid token sells in <b>last-in, first-out</b> order. Selling 1 slugg burns the <b>most-recently-minted</b> slugg in your inventory — not the one you opened the modal on.</p>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:0 0 16px;">
+        <div style="padding:12px; background:#1a0a0a; border:2px solid var(--err); border-radius:4px;">
+          <div style="font-size:10px; color:var(--muted); letter-spacing:2px;">⚠ WILL BURN</div>
+          <div id="sell-confirm-target" style="font-size:16px; color:var(--err); margin-top:6px; font-weight:600;">—</div>
+        </div>
+        <div style="padding:12px; background:#0a1a05; border:1px solid var(--accent); border-radius:4px;">
+          <div style="font-size:10px; color:var(--muted); letter-spacing:2px;">YOU RECEIVE</div>
+          <div id="sell-confirm-eth" style="font-size:16px; color:var(--accent); margin-top:6px; font-weight:600;">—</div>
+        </div>
       </div>
-      <p style="margin:0 0 14px; color:var(--warn);"><b>To proceed with LIFO sell, check the box below.</b></p>
-      <label style="display:flex; gap:10px; align-items:center; padding:10px; border:1px solid var(--border); border-radius:4px; cursor:pointer; margin-bottom:14px;">
-        <input id="sell-confirm-check" type="checkbox" style="width:18px; height:18px; cursor:pointer;">
-        <span style="font-size:12px;">I understand — burn whichever slugg is last in my inventory</span>
-      </label>
+
+      <div style="margin:0 0 16px; padding:12px; background:#0a1a05; border:1px solid var(--accent); border-radius:4px;">
+        <div style="font-size:10px; color:var(--accent); letter-spacing:2px; margin-bottom:8px;">▸ PROTECT IT — CLAIM AS ERC-721 FIRST</div>
+        <p style="margin:0 0 8px; font-size:12px; color:var(--fg);">Claim lifts that specific slugg into a standalone ERC-721 (visible on OpenSea / Blur, transferable, and out of the LIFO queue). Three steps:</p>
+        <ol style="margin:0 0 10px 18px; font-size:12px; color:var(--fg); padding:0;">
+          <li>Click <b>PROTECT #N</b> below — wallet prompts to sign claim()</li>
+          <li>Confirm in wallet (claim fee 0.0001 ETH on testnet)</li>
+          <li>Slugg is now safe in your wallet as a real NFT — appears in YOUR CLAIMED. The next sell will burn a different slugg.</li>
+        </ol>
+        <button id="sell-confirm-protect" class="ghost" style="border-color:var(--accent); color:var(--accent); font-size:11px;">PROTECT #—</button>
+      </div>
+
+      <div style="margin:0 0 14px;">
+        <label style="display:flex; gap:10px; align-items:center; padding:10px; border:1px solid var(--border); border-radius:4px; cursor:pointer;">
+          <input id="sell-confirm-check" type="checkbox" style="width:18px; height:18px; cursor:pointer;">
+          <span style="font-size:12px;">I'm OK losing slugg #<span id="sell-confirm-num">—</span> to LIFO sell</span>
+        </label>
+      </div>
+
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button class="ghost" onclick="cancelSell()">CANCEL</button>
         <button id="sell-confirm-btn" disabled style="background:var(--err); color:#fff;">SELL FOR ETH</button>
@@ -704,21 +724,55 @@ function closeModal() {
 // Open the sell-confirm dialog. Actual sell only fires when user checks the box + confirms.
 async function sellSlugg() {
   const check = $("sell-confirm-check");
-  const btn = $("sell-confirm-btn");
+  const sellBtn = $("sell-confirm-btn");
+  const protectBtn = $("sell-confirm-protect");
   check.checked = false;
-  btn.disabled = true;
-  check.onchange = () => { btn.disabled = !check.checked; };
-  btn.onclick = () => { cancelSell(); _doSellLIFO(); };
+  sellBtn.disabled = true;
+  check.onchange = () => { sellBtn.disabled = !check.checked; };
+  sellBtn.onclick = () => { cancelSell(); _doSellLIFO(); };
   // Look up the actual LIFO target — it's the LAST entry in inventoryOf
   $("sell-confirm-target").textContent = "looking up…";
+  $("sell-confirm-num").textContent = "—";
+  protectBtn.textContent = "PROTECT #—";
+  protectBtn.disabled = true;
   try {
     const r = await ethCall(TOKEN, "0x" + SEL_INVENTORY_OF + encAddr(walletAddr));
     const ids = decUintArray(r);
     if (ids.length === 0) {
       $("sell-confirm-target").textContent = "(none — your inventory is empty)";
-      btn.disabled = true;
+      sellBtn.disabled = true;
     } else {
-      $("sell-confirm-target").innerHTML = `slugg <b>#${ids[ids.length - 1]}</b> (last in your inventory)`;
+      const targetId = ids[ids.length - 1];
+      $("sell-confirm-target").innerHTML = `slugg <b>#${targetId}</b> · last in your inventory`;
+      $("sell-confirm-num").textContent = targetId;
+      protectBtn.textContent = `PROTECT #${targetId}`;
+      protectBtn.disabled = false;
+      protectBtn.onclick = async () => {
+        protectBtn.disabled = true;
+        protectBtn.textContent = "CLAIMING…";
+        cancelSell();
+        await claim(targetId);
+      };
+      // Quote the ETH amount the sell will return — simulate sell() if allowance is set
+      $("sell-confirm-eth").textContent = "quoting…";
+      try {
+        const allowR = await ethCall(TOKEN, "0xdd62ed3e" + encAddr(walletAddr) + encAddr(SWAP));
+        if (decUint(allowR) >= 1000n) {
+          // Allowance set — simulate the actual sell call
+          const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800);
+          const data = "0xd3c9727c" + encU256(1000) + encU256(0) + deadline.toString(16).padStart(64, "0");
+          const r = await rpc("eth_call", [{ to: SWAP, data, from: walletAddr }, "latest"]);
+          const ethOut = decUint(r);
+          const ethDisplay = ethOut > 1_000_000_000_000_000n
+            ? `${(Number(ethOut) / 1e18).toFixed(6)} ETH`
+            : `${ethOut} wei`;
+          $("sell-confirm-eth").innerHTML = `${ethDisplay}<div style="font-size:9px; color:var(--muted); margin-top:3px;">testnet pool started at tick 0</div>`;
+        } else {
+          $("sell-confirm-eth").innerHTML = `<span style="font-size:11px; color:var(--warn);">need approve first<br>(2 txs total)</span>`;
+        }
+      } catch (e) {
+        $("sell-confirm-eth").innerHTML = `<span style="font-size:11px; color:var(--err);">quote failed</span>`;
+      }
     }
   } catch (e) {
     $("sell-confirm-target").textContent = "(could not read inventory)";
