@@ -61,13 +61,11 @@ contract SeedLaunchLPSepolia is Script {
         //   Pool was initialized at tick 0. We add USLUG-only liquidity ABOVE the
         //   current tick (so users buying USLUG with ETH walk up the curve).
         //
-        //   Position 1: ticks [0, 6000]    — main band, 500 USLUG  (100 ticks)
-        //   Position 2: ticks [6000, 12000] — upper tail, 100 USLUG (100 ticks)
-        //
-        //   Tighter ranges so each tx fits Sepolia's 16.7M gas cap.
-        //   Total seeded: 600 sluggs (6e5 raw). Plenty for testnet trading.
-        uint256 t1 = _mintPosition(key, 0,    6000, 500 * 1e3);
-        uint256 t2 = _mintPosition(key, 6000, 12000, 100 * 1e3);
+        //   ONE small position to fit Sepolia's 16.7M tx-gas cap.
+        //   Each initialized tick costs ~50k gas, so ~10-20 ticks max per tx.
+        //   Position: ticks [0, 600] = 10 ticks initialized, 100 USLUG seeded.
+        uint256 t1 = _mintPosition(key, 0, 600, 100 * 1e3);
+        uint256 t2 = t1;  // unused, kept for log compatibility
 
         vm.stopBroadcast();
 

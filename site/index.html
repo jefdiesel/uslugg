@@ -28,7 +28,10 @@
   .status.ok  { color:var(--accent); }
   .status.err { color:var(--err); }
   .status.pending { color:var(--warn); }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:4px; }
+  @media (min-width:900px) { .grid { grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); } }
+  .lbl { font-size:9px; padding:3px 5px; }
+  .lbl a { font-size:8px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:4px; overflow:hidden; }
   .frame { aspect-ratio:1; background:#000; position:relative; cursor:pointer; }
   /* iframes intercept clicks by default — disable that so the parent .frame onclick fires */
@@ -635,15 +638,27 @@ async function openItem(id, contract) {
       }).join("");
     }
     // Action buttons: claim (if 404) or unclaim (if claimed)
-    if (walletAddr && !isClaimed) {
+    // Ownership check — only show actions on tokens the connected wallet owns
+    let isOwner = false;
+    if (walletAddr) {
+      try {
+        const ownerR = await ethCall(contract, "0x" + SEL_OWNEROF + encU256(id));
+        isOwner = decAddr(ownerR).toLowerCase() === walletAddr.toLowerCase();
+      } catch { /* ignore — token may not exist */ }
+    }
+    if (isOwner && !isClaimed) {
       const fees = await ensureFees();
       const ethFee = Number(fees.claim) / 1e18;
-      $("modal-action").innerHTML = `<button onclick="claim(${id})">CLAIM → ERC-721 (${ethFee} ETH)</button>`;
-    } else if (walletAddr && isClaimed) {
+      $("modal-action").innerHTML = `
+        <button onclick="claim(${id})">CLAIM → ERC-721 (${ethFee} ETH)</button>
+        <button class="ghost" onclick="sellSlugg()" title="LIFO: sells your last-minted slugg, not necessarily this one">SELL (LIFO)</button>
+      `;
+    } else if (isOwner && isClaimed) {
       const fees = await ensureFees();
       const ethFee = Number(fees.unclaim) / 1e18;
       $("modal-action").innerHTML = `<button onclick="unclaim(${id})">UNCLAIM → 404 (${ethFee} ETH)</button>`;
     }
+    // If not owner: no action buttons. Modal still shows traits + animation + key.
     // Links — OpenSea only meaningful for CLAIMED (real ERC-721); 404 NFTs aren't indexed there
     const erscan = `https://sepolia.etherscan.io/token/${contract}?a=${id}`;
     let links = `<a href="${erscan}" target="_blank">view on etherscan ↗</a>`;
@@ -661,10 +676,40 @@ function closeModal() {
   $("modal").style.display = "none";
   $("modal-frame").innerHTML = "";
 }
+// Sell 1 USLUG by transferring it back to the mint helper. The 404 burns the
+// caller's LIFO slugg automatically. Note: testnet beta — no ETH back, just
+// returns the slugg to the supply pool. Production would route via USluggSwap.
+async function sellSlugg() {
+  if (!walletAddr) return;
+  const btn = document.querySelector("#modal-action .ghost");
+  const orig = btn?.textContent || "";
+  if (btn) { btn.textContent = "SELLING…"; btn.disabled = true; }
+  setStatus("selling 1 slugg (LIFO)…", "pending");
+  try {
+    // ERC-20 transfer(MINT_HELPER, 1.000 USLUG = 1000 raw)
+    const SEL_TRANSFER = "a9059cbb";
+    const data = "0x" + SEL_TRANSFER + encAddr(MINT_HELPER) + encU256(1000);
+    const txHash = await window.ethereum.request({
+      method: "eth_sendTransaction",
+      params: [{ from: walletAddr, to: TOKEN, data }],
+    });
+    if (btn) btn.textContent = "CONFIRMING…";
+    setStatus(`sell tx ${txHash.slice(0,12)}…`, "pending");
+    await waitReceipt(txHash);
+    setStatus("sold ✓ slugg burned (LIFO)", "ok");
+    closeModal();
+    refreshBalance(); refreshMine(); refreshAll();
+  } catch (e) {
+    if (btn) { btn.textContent = orig; btn.disabled = false; }
+    setStatus("sell failed: " + (e.data?.message || e.message).slice(0,80), "err");
+  }
+}
+
 window.openItem = openItem;
 window.closeModal = closeModal;
 window.claim = claim;
 window.unclaim = unclaim;
+window.sellSlugg = sellSlugg;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 $("modal").onclick = (e) => { if (e.target === $("modal")) closeModal(); };
 
