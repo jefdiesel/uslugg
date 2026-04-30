@@ -72,11 +72,24 @@
   </div>
   <div class="status" id="status"></div>
 
-  <div class="info-box" style="margin-bottom:8px; border-left:3px solid var(--accent); font-size:13px; line-height:1.8;">
-    <b style="color:var(--accent); font-size:15px; letter-spacing:1px;">WHAT IS THIS</b><br>
-    <b>uSlugg</b> is <b>animated</b> generative art. Each piece is <b>1-3 panels</b> of patterns (noise / checkerboard / stripes / etc.) that <b>smear</b> across the canvas, fade, and re-emerge forever. <br>
-    Fully on-chain: <b>seed</b> in contract storage · <b>renderer</b> + <b>JS runtime</b> are bytecode-stored · your wallet animates them live.<br>
-    Testnet uses a public-mint contract. <b>Real launch will be a v4 hook + 404 hybrid</b> — sluggs mint as you swap.
+  <div class="info-box" style="margin-bottom:8px; border-left:4px solid var(--accent); font-size:14px; line-height:1.85; background:#0e0e0e;">
+    <b style="color:var(--accent); font-size:18px; letter-spacing:2px; display:block; margin-bottom:8px;">WHAT IS THIS</b>
+    <p style="margin:0 0 10px;">
+      <b style="color:var(--accent);">uSlugg</b> is a <b>10,000-piece</b> animated, fully on-chain generative art collection.
+      Each slugg is <b>1–3 panels</b> of patterns (<b>noise · checkerboard · stripes · dashes · dots · diagonal · random-blocks</b>) that <b>smear</b> across a <b>Canvas2D</b> loop, fade, and re-emerge forever.
+    </p>
+    <p style="margin:0 0 10px;">
+      <b style="color:var(--accent);">FULLY ON-CHAIN.</b> The seed lives in contract storage. The <b>renderer</b> and the <b>~10KB Canvas2D JS runtime</b> are bytecode-stored. <code>tokenURI</code> returns an <code>animation_url</code> data URI — your wallet renders the animation live, no IPFS, no off-chain hosting.
+    </p>
+    <p style="margin:0 0 10px;">
+      <b style="color:var(--accent);">UNISWAP V4 HOOK MINT.</b> The real launch wires a v4 <code>afterSwap</code> hook to a 10k <b>404 hybrid</b> token (USLUG, 3 decimals). Every swap re-rolls the on-chain seed; whenever your USLUG balance crosses a whole-token threshold, an NFT mints with the current seed. <b>Selling burns the NFT</b>; the next buyer gets a fresh seed — so the same token unit cycles through different sluggs over its lifetime.
+    </p>
+    <p style="margin:0 0 10px;">
+      <b style="color:var(--accent);">CLAIM &amp; UNCLAIM.</b> A <code>claim()</code> path lifts a slugg out of the 404 into a standalone ERC-721 (with EIP-2981 royalties) so it lists on OpenSea / Blur. Pay a small ETH fee to lift, pay another to unwrap.
+    </p>
+    <p style="margin:0; font-size:12px; color:var(--muted);">
+      ↓ <b style="color:var(--fg);">This page is the renderer-only beta</b> on Sepolia: anyone with testnet ETH can <code>mint()</code> directly to verify the art system works in real wallets. The full v4 + LP + claim stack ships next.
+    </p>
   </div>
 
   <hr class="sep">

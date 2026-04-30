@@ -49,7 +49,9 @@ contract USlugg404 {
     mapping(address => bool)      public skipSluggs;
 
     uint256 public nextSluggId;
-    address public owner;
+    /// @dev `owner` is set in constructor and never changes (no transferOwnership).
+    /// Marking immutable saves the SLOAD on every onlyOwner check.
+    address public immutable owner;
     address payable public treasury;
     /// @dev Claim fee in ETH (wei). Sent to treasury when a holder calls claim().
     uint256 public claimFeeWei;

@@ -31,7 +31,7 @@ contract USluggBeta {
     event Approval(address indexed owner, address indexed approved, uint256 indexed id);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
     event SluggMinted(uint256 indexed id, address indexed to, bytes32 key);
-    event RendererSet(address renderer);
+    event RendererSet(address indexed renderer);
 
     error MaxSupply();
     error NotAdmin();
@@ -63,10 +63,11 @@ contract USluggBeta {
     function mint(uint256 count) external returns (uint256[] memory ids) {
         if (count == 0 || count > MAX_PER_TX) revert BadCount();
         ids = new uint256[](count);
+        // Pull totalSupply once, mutate in memory, write back at end (saves N-1 SSTOREs)
+        uint256 next = totalSupply;
         for (uint256 i; i < count; i++) {
-            if (totalSupply >= MAX_SUPPLY) revert MaxSupply();
-            uint256 id = totalSupply;
-            totalSupply = id + 1;
+            if (next >= MAX_SUPPLY) revert MaxSupply();
+            uint256 id = next++;
             bytes32 k = keccak256(abi.encode(
                 blockhash(block.number - 1),
                 block.timestamp,
@@ -80,6 +81,7 @@ contract USluggBeta {
             emit SluggMinted(id, msg.sender, k);
             ids[i] = id;
         }
+        totalSupply = next;
     }
 
     // -------- ERC-721 --------
