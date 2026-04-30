@@ -25,37 +25,73 @@ contract USluggRuntime {
         "const PA=['noise','random-blocks','checkerboard','stripes','dashes','dots','linear-gradient'];"
         "const D=[{dx:1,dy:0},{dx:1,dy:1},{dx:0,dy:1},{dx:-1,dy:1},{dx:-1,dy:0},{dx:-1,dy:-1},{dx:0,dy:-1},{dx:1,dy:-1}];"
         // === PANEL MATH ===
-        "const cnt=b(10)===0?1:2,ori=b(1);"
-        // Split: ~94% main range 10..90%, ~6% ultra-thin (1..9 / 91..99)
+        // 1-panel ≈ 0.1%; 3-panel ≈ 6.25% (b(4)===0 within the not-1 case);
+        // remainder ≈ 93.7% = 2-panel.
+        "const cnt=b(10)===0?1:(b(4)===0?3:2),ori=b(1);"
+        // Main split: ~94% in 10..90%, ~6% rare thin slivers (1..9 / 91..99)
         "const rareSplit=b(4)===0;let sp;"
         "if(rareSplit){const side=b(1),thin=1+b(3);sp=side?100-thin:thin}"
         "else{sp=10+(b(7)%81)}"
-        // Channel pickers: contrast favors opposite half; match favors same/adjacent
-        "const cCh=fc=>{const t=b(4);if(t<11)return fc<3?(4+b(1)):b(1);if(t<15)return Math.max(0,Math.min(5,fc+(b(1)?2:-2)));return fc};"
-        "const mCh=fc=>{const t=b(4);if(t<11)return Math.max(0,Math.min(5,fc+b(2)-1));if(t<15)return Math.max(0,Math.min(5,fc+(b(1)?2:-2)));return fc<3?5:0};"
-        "const pickBG=(f,m)=>{const fR=Math.floor(f/36),fG=Math.floor((f%36)/6),fB=f%6,fn=m?mCh:cCh;return fn(fR)*36+fn(fG)*6+fn(fB)};"
+        // Cross-split params (used when cnt===3):
+        "const crossAxis=b(1),splitSide=b(1),sp2=15+(b(6)%71);"
+        // Channel picker: nearly always force the opposite half so contrast is visually loud.
+        "const cCh=fc=>{const t=b(4);if(t<14)return fc<3?(4+b(1)):b(1);return Math.max(0,Math.min(5,fc+(b(1)?2:-2)))};"
+        "const pickBG=f=>{const fR=Math.floor(f/36),fG=Math.floor((f%36)/6),fB=f%6;return cCh(fR)*36+cCh(fG)*6+cCh(fB)};"
+        // Manhattan distance between two palette indices (for cross-panel rejection).
+        "const palDist=(a,b)=>{const aR=Math.floor(a/36),aG=Math.floor((a%36)/6),aB=a%6,bR=Math.floor(b/36),bG=Math.floor((b%36)/6),bB=b%6;return Math.abs(aR-bR)+Math.abs(aG-bG)+Math.abs(aB-bB)};"
+        // Pick a fresh palette idx far from a list of existing ones (min L1 distance ≥ 4 of 15).
+        "const pickFar=ex=>{for(let attempt=0;attempt<6;attempt++){const c=b(8)%216;let ok=true;for(const e of ex){if(palDist(c,e)<4){ok=false;break}}if(ok)return c}return b(8)%216};"
         // Cell size pulled from 5 distinct tiers for max variety:
         //   ultra-fine (2-3), fine (4-7), medium (8-16), chunky (17-40), giant (41-80)
         "const csTier=b(3)%5;"
         "const pickCS=()=>{const t=b(3)%5;if(t===0)return 2+b(1);if(t===1)return 4+b(2);if(t===2)return 8+b(3);if(t===3)return 17+b(5)%24;return 41+b(6)%40};"
         "const ps=[];"
-        // Panel 0 — free roll, contrast-biased BG
-        "{const fg=b(8)%216,bg=pickBG(fg,0),pIdx=b(3)%7;"
+        // Panel 0 — free roll, high-contrast BG
+        "{const fg=b(8)%216,bg=pickBG(fg),pIdx=b(3)%7;"
         "ps.push({patIdx:pIdx,pattern:PA[pIdx],color1:palRGB(fg),color2:palRGB(bg),fgIdx:fg,bgIdx:bg,cellSize:pickCS(),speed:1+b(4)%10,smearAmount:1+b(5),trailIntensity:0.78+b(4)*0.014,decayBps:6+b(5),dirIdx:b(3)%8,dirChgInterval:(2+b(4))*1000})}"
-        // Panel 1 — derived from panel 0 to feel like a coherent pair
-        "if(cnt===2){"
-        "const fg=ps[0].bgIdx;"          // FG2 = BG of panel 0 (visual carry-through)
-        "const bg=pickBG(fg,1);"          // BG2 = match-biased (softer, opposite contrast direction)
+        // Panel 1 — independent FG (rejected if too close to panel 0's two colors), then high-contrast BG
+        "if(cnt>=2){"
+        "const fg=pickFar([ps[0].fgIdx,ps[0].bgIdx]);"
+        "const bg=pickBG(fg);"
         "let pIdx=b(3)%7;if(pIdx===ps[0].patIdx)pIdx=(pIdx+1)%7;"
-        "const sp2=11-ps[0].speed;"       // speed inverted
-        "const dir=(ps[0].dirIdx+4)%8;"   // direction reversed (opposite vector)
-        "ps.push({patIdx:pIdx,pattern:PA[pIdx],color1:palRGB(fg),color2:palRGB(bg),fgIdx:fg,bgIdx:bg,cellSize:pickCS(),speed:sp2,smearAmount:1+b(5),trailIntensity:0.78+b(4)*0.014,decayBps:6+b(5),dirIdx:dir,dirChgInterval:(2+b(4))*1000})}"
+        "const spA=11-ps[0].speed;"
+        "const dir=(ps[0].dirIdx+4)%8;"
+        "ps.push({patIdx:pIdx,pattern:PA[pIdx],color1:palRGB(fg),color2:palRGB(bg),fgIdx:fg,bgIdx:bg,cellSize:pickCS(),speed:spA,smearAmount:1+b(5),trailIntensity:0.78+b(4)*0.014,decayBps:6+b(5),dirIdx:dir,dirChgInterval:(2+b(4))*1000})}"
+        // Panel 2 — independent FG (far from all 4 prior colors), high-contrast BG
+        "if(cnt===3){"
+        "const fg=pickFar([ps[0].fgIdx,ps[0].bgIdx,ps[1].fgIdx,ps[1].bgIdx]);"
+        "const bg=pickBG(fg);"
+        "let pIdx=b(3)%7;"
+        "while(pIdx===ps[0].patIdx||pIdx===ps[1].patIdx)pIdx=(pIdx+1)%7;"
+        "const spA=Math.max(1,Math.min(10,(ps[0].speed+ps[1].speed)/2|0));"
+        "const dir=(ps[1].dirIdx+2)%8;"
+        "ps.push({patIdx:pIdx,pattern:PA[pIdx],color1:palRGB(fg),color2:palRGB(bg),fgIdx:fg,bgIdx:bg,cellSize:pickCS(),speed:spA,smearAmount:1+b(5),trailIntensity:0.78+b(4)*0.014,decayBps:6+b(5),dirIdx:dir,dirChgInterval:(2+b(4))*1000})}"
         "const SZ=400;"
         "document.body.style.cssText='margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh;overflow:hidden';"
         "const container=document.createElement('div');"
         "container.style.cssText='width:min(100vh,100vw);height:min(100vh,100vw);position:relative;background:#000';"
         "document.body.appendChild(container);"
-        "const rs=cnt===1?[{x:0,y:0,w:SZ,h:SZ}]:(ori?[{x:0,y:0,w:SZ,h:Math.floor(SZ*sp/100)},{x:0,y:Math.floor(SZ*sp/100),w:SZ,h:SZ-Math.floor(SZ*sp/100)}]:[{x:0,y:0,w:Math.floor(SZ*sp/100),h:SZ},{x:Math.floor(SZ*sp/100),y:0,w:SZ-Math.floor(SZ*sp/100),h:SZ}]);"
+        // Layout calc. cnt=1: full canvas. cnt=2: standard 2-panel split.
+        // cnt=3 + crossAxis=0: three parallel stripes (sp = first cut, sp+sp2 = second cut, capped).
+        // cnt=3 + crossAxis=1: 2-panel split, then the chosen side gets a perpendicular split at sp2%.
+        "const rs=(()=>{"
+        "const sp1=Math.floor(SZ*sp/100);"
+        "if(cnt===1)return[{x:0,y:0,w:SZ,h:SZ}];"
+        "if(cnt===2)return ori?[{x:0,y:0,w:SZ,h:sp1},{x:0,y:sp1,w:SZ,h:SZ-sp1}]:[{x:0,y:0,w:sp1,h:SZ},{x:sp1,y:0,w:SZ-sp1,h:SZ}];"
+        "if(crossAxis===0){"
+        "let sec=sp+Math.max(10,Math.floor(sp2*(100-sp)/100));"
+        "if(sec>96)sec=96;if(sec<=sp+5)sec=Math.min(96,sp+10);"
+        "const sp2px=Math.floor(SZ*sec/100);"
+        "return ori?[{x:0,y:0,w:SZ,h:sp1},{x:0,y:sp1,w:SZ,h:sp2px-sp1},{x:0,y:sp2px,w:SZ,h:SZ-sp2px}]:[{x:0,y:0,w:sp1,h:SZ},{x:sp1,y:0,w:sp2px-sp1,h:SZ},{x:sp2px,y:0,w:SZ-sp2px,h:SZ}];"
+        "}"
+        "const sp2px=Math.floor(SZ*sp2/100);"
+        "if(ori===0){"
+        "if(splitSide===0)return[{x:0,y:0,w:sp1,h:sp2px},{x:0,y:sp2px,w:sp1,h:SZ-sp2px},{x:sp1,y:0,w:SZ-sp1,h:SZ}];"
+        "return[{x:0,y:0,w:sp1,h:SZ},{x:sp1,y:0,w:SZ-sp1,h:sp2px},{x:sp1,y:sp2px,w:SZ-sp1,h:SZ-sp2px}];"
+        "}"
+        "if(splitSide===0)return[{x:0,y:0,w:sp2px,h:sp1},{x:sp2px,y:0,w:SZ-sp2px,h:sp1},{x:0,y:sp1,w:SZ,h:SZ-sp1}];"
+        "return[{x:0,y:0,w:SZ,h:sp1},{x:0,y:sp1,w:sp2px,h:SZ-sp1},{x:sp2px,y:sp1,w:SZ-sp2px,h:SZ-sp1}];"
+        "})();"
         // Convert rect coords from logical SZ to relative percentages
         "rs.forEach(r=>{r.left=(r.x/SZ)*100;r.top=(r.y/SZ)*100;r.pw=(r.w/SZ)*100;r.ph=(r.h/SZ)*100});"
         "const det=s=>{let v=(s|0)^0x9E3779B9;v^=v<<13;v^=v>>>17;v^=v<<5;return((v>>>0)%10000)/10000};"
