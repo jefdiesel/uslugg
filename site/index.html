@@ -47,6 +47,9 @@
   h2 { font-size:14px; color:var(--muted); letter-spacing:2px; margin:0 0 12px; }
   .info-box { padding:14px; border:1px solid var(--border); border-radius:6px; background:var(--card); font-size:13px; color:var(--fg); line-height:1.7; }
   .info-box code { color:var(--accent); background:#0e0e0e; padding:1px 4px; border-radius:2px; }
+  details.info-box summary { padding:4px 0; user-select:none; }
+  details.info-box summary:hover { filter:brightness(1.15); }
+  details.info-box[open] summary { margin-bottom:4px; padding-bottom:8px; border-bottom:1px solid var(--border); }
   .trait { background:#0a0a0a; border:1px solid var(--border); border-radius:4px; padding:6px 8px; }
   .trait .k { color:var(--muted); font-size:9px; letter-spacing:1px; text-transform:uppercase; }
   .trait .v { color:var(--accent); font-size:12px; margin-top:2px; word-break:break-word; }
@@ -86,17 +89,18 @@
     </div>
   </details>
 
-  <div class="bar" style="margin-top:14px;">
+  <div class="bar" style="margin-top:14px; flex-wrap:wrap; display:flex; gap:8px; align-items:center;">
     <button id="btn-connect">Connect wallet</button>
-    <span class="info">
+    <span class="info" style="flex:1; min-width:200px;">
       <span id="wallet-state">not connected</span>
-      &nbsp;·&nbsp; your USLUG: <b id="usluk-balance">—</b>
-      &nbsp;·&nbsp; total minted: <b id="total">—</b> / 10000
+      &nbsp;·&nbsp; you: <b id="usluk-balance">—</b> · supply: <b id="total">—</b>/10000
     </span>
-    <input id="mint-count" type="number" min="1" max="100" value="1" style="background:#000;color:var(--fg);border:1px solid var(--border);padding:8px 12px;font:inherit;border-radius:4px;width:80px;">
-    <button id="btn-mint" disabled>BUY</button>
+    <div style="display:flex; gap:6px; align-items:center;">
+      <input id="mint-count" type="number" min="1" max="100" value="1" style="background:#000;color:var(--fg);border:1px solid var(--border);padding:8px 12px;font:inherit;border-radius:4px;width:64px;">
+      <button id="btn-mint" disabled>BUY</button>
+    </div>
+    <div class="status" id="status" style="flex-basis:100%; margin-top:4px;"></div>
   </div>
-  <div class="status" id="status"></div>
 
   <hr class="sep">
 
@@ -116,11 +120,11 @@
   <div id="all" class="grid"></div>
 
   <p class="sub" style="margin-top:32px; font-size:10px;">
-    USlugg404: <a class="addr" target="_blank" id="link-token">—</a><br>
-    USluggClaimed: <a class="addr" target="_blank" id="link-claimed">—</a><br>
-    USluggMintHelper: <a class="addr" target="_blank" id="link-mint-helper">—</a><br>
-    Renderer: <a class="addr" target="_blank" id="link-renderer">—</a><br>
-    Runtime: <a class="addr" target="_blank" id="link-runtime">—</a>
+    <span style="display:inline-block; min-width:120px;">Token:</span> <a class="addr" target="_blank" id="link-token">—</a><br>
+    <span style="display:inline-block; min-width:120px;">Claimed NFT:</span> <a class="addr" target="_blank" id="link-claimed">—</a><br>
+    <span style="display:inline-block; min-width:120px;">Buy contract:</span> <a class="addr" target="_blank" id="link-mint-helper">—</a><br>
+    <span style="display:inline-block; min-width:120px;">Renderer:</span> <a class="addr" target="_blank" id="link-renderer">—</a><br>
+    <span style="display:inline-block; min-width:120px;">Runtime:</span> <a class="addr" target="_blank" id="link-runtime">—</a>
   </p>
 </div>
 
@@ -343,6 +347,7 @@ async function connect() {
     }
     $("wallet-state").innerHTML = `connected: <b>${walletAddr.slice(0,6)}…${walletAddr.slice(-4)}</b> <button class="tiny ghost" onclick="navigator.clipboard.writeText('${walletAddr}')">copy</button>`;
     $("btn-connect").textContent = "Disconnect";
+    $("btn-connect").classList.add("ghost");
     $("btn-connect").onclick = () => { walletAddr = null; location.reload(); };
     $("btn-mint").disabled = false;
     setStatus("ready", "ok");
@@ -506,7 +511,7 @@ async function refreshAll() {
     const totalRaw = await ethCall(TOKEN, "0x" + SEL_NEXTSLUGGID);
     const total = Number(decUint(totalRaw));
     if (total === 0) {
-      $("all").innerHTML = '<div class="empty" style="grid-column:1/-1;">no mints yet — use the faucet</div>';
+      $("all").innerHTML = '<div class="empty" style="grid-column:1/-1;">no mints yet — press BUY</div>';
       return;
     }
     const start = Math.max(0, total - 24);
