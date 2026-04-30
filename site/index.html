@@ -131,6 +131,30 @@
   </p>
 </div>
 
+<!-- SELL CONFIRM DIALOG -->
+<div id="sell-confirm" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.95); z-index:200; padding:24px;">
+  <div style="max-width:520px; margin:8vh auto 0; background:var(--card); border:2px solid var(--err); border-radius:8px; padding:24px;">
+    <h2 style="color:var(--err); margin:0 0 14px; font-size:18px; letter-spacing:2px;">⚠ SELL IS LIFO — READ THIS</h2>
+    <div style="font-size:13px; line-height:1.7; color:var(--fg);">
+      <p style="margin:0 0 12px;">The 404 token sells in <b>last-in, first-out order</b>. Selling 1 slugg burns the <b>most-recently-minted</b> slugg in your inventory — <b>not necessarily the one you clicked</b>.</p>
+      <p style="margin:0 0 12px;">If you want to sell <b>this specific slugg</b>, hit <b>CANCEL</b> and click <b>CLAIM</b> instead. Claim lifts a specific id into a standalone ERC-721 you can sell directly on OpenSea / Blur. Claim is NOT LIFO — it picks the exact id.</p>
+      <div style="margin:0 0 14px; padding:10px; background:#1a0a0a; border:1px solid var(--err); border-radius:4px;">
+        <div style="font-size:10px; color:var(--muted); letter-spacing:2px;">WILL BURN</div>
+        <div id="sell-confirm-target" style="font-size:14px; color:var(--err); margin-top:4px;">—</div>
+      </div>
+      <p style="margin:0 0 14px; color:var(--warn);"><b>To proceed with LIFO sell, check the box below.</b></p>
+      <label style="display:flex; gap:10px; align-items:center; padding:10px; border:1px solid var(--border); border-radius:4px; cursor:pointer; margin-bottom:14px;">
+        <input id="sell-confirm-check" type="checkbox" style="width:18px; height:18px; cursor:pointer;">
+        <span style="font-size:12px;">I understand — burn whichever slugg is last in my inventory</span>
+      </label>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="ghost" onclick="cancelSell()">CANCEL</button>
+        <button id="sell-confirm-btn" disabled style="background:var(--err); color:#fff;">SELL FOR ETH</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ITEM VIEW MODAL -->
 <div id="modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:100; overflow-y:auto; padding:24px;">
   <div style="max-width:780px; margin:0 auto; background:var(--card); border:1px solid var(--border); border-radius:8px;">
@@ -677,9 +701,36 @@ function closeModal() {
   $("modal").style.display = "none";
   $("modal-frame").innerHTML = "";
 }
-// Real sell: routes 1 USLUG through USluggSwap → v4 pool, returns ETH proceeds.
-// Two-step the first time (approve → sell). Subsequent sells reuse the allowance.
+// Open the sell-confirm dialog. Actual sell only fires when user checks the box + confirms.
 async function sellSlugg() {
+  const check = $("sell-confirm-check");
+  const btn = $("sell-confirm-btn");
+  check.checked = false;
+  btn.disabled = true;
+  check.onchange = () => { btn.disabled = !check.checked; };
+  btn.onclick = () => { cancelSell(); _doSellLIFO(); };
+  // Look up the actual LIFO target — it's the LAST entry in inventoryOf
+  $("sell-confirm-target").textContent = "looking up…";
+  try {
+    const r = await ethCall(TOKEN, "0x" + SEL_INVENTORY_OF + encAddr(walletAddr));
+    const ids = decUintArray(r);
+    if (ids.length === 0) {
+      $("sell-confirm-target").textContent = "(none — your inventory is empty)";
+      btn.disabled = true;
+    } else {
+      $("sell-confirm-target").innerHTML = `slugg <b>#${ids[ids.length - 1]}</b> (last in your inventory)`;
+    }
+  } catch (e) {
+    $("sell-confirm-target").textContent = "(could not read inventory)";
+  }
+  $("sell-confirm").style.display = "block";
+}
+function cancelSell() { $("sell-confirm").style.display = "none"; }
+window.sellSlugg = sellSlugg;
+window.cancelSell = cancelSell;
+
+// Real sell: routes 1 USLUG through USluggSwap → v4 pool, returns ETH proceeds.
+async function _doSellLIFO() {
   if (!walletAddr) return;
   const btn = document.querySelector("#modal-action .ghost");
   const orig = btn?.textContent || "";
@@ -730,7 +781,6 @@ window.openItem = openItem;
 window.closeModal = closeModal;
 window.claim = claim;
 window.unclaim = unclaim;
-window.sellSlugg = sellSlugg;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 $("modal").onclick = (e) => { if (e.target === $("modal")) closeModal(); };
 
