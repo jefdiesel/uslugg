@@ -105,6 +105,22 @@
     <div class="status" id="status" style="flex-basis:100%; margin-top:4px;"></div>
   </div>
 
+  <!-- LIFO SELL PANEL — shows the next-to-burn slugg with sell + protect buttons -->
+  <div id="lifo-panel" style="display:none; margin-top:8px; padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--card);">
+    <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
+      <div id="lifo-preview" style="width:80px; height:80px; flex-shrink:0; background:#000; border:1px solid var(--border); border-radius:4px; overflow:hidden;"></div>
+      <div style="flex:1; min-width:160px;">
+        <div style="font-size:10px; color:var(--muted); letter-spacing:2px;">NEXT TO SELL (LIFO)</div>
+        <div id="lifo-id" style="font-size:18px; color:var(--err); font-weight:600; margin:2px 0;">—</div>
+        <div id="lifo-quote" style="font-size:11px; color:var(--accent);">—</div>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button id="lifo-protect" class="ghost" disabled>CLAIM TO PROTECT</button>
+        <button id="lifo-sell" disabled style="background:var(--err); color:#fff;">SELL FOR ETH</button>
+      </div>
+    </div>
+  </div>
+
   <hr class="sep">
 
   <div id="section-mine" style="display:none;">
@@ -402,6 +418,7 @@ async function connect() {
     refreshBalance();
     refreshMine();
     refreshClaimed();
+    refreshLIFO();
   } catch (e) { setStatus("connect failed: " + e.message, "err"); }
 }
 
@@ -462,7 +479,7 @@ async function claim(id) {
     await waitReceipt(txHash);
     setStatus(`#${id} claimed ✓ now an ERC-721`, "ok");
     closeModal();
-    refreshBalance(); refreshMine(); refreshClaimed();
+    refreshBalance(); refreshMine(); refreshClaimed(); refreshLIFO();
   } catch (e) {
     if (btn) { btn.textContent = origLabel; btn.disabled = false; }
     setStatus("claim failed: " + (e.data?.message || e.message).slice(0,80), "err");
@@ -486,7 +503,7 @@ async function unclaim(id) {
     await waitReceipt(txHash);
     setStatus(`#${id} unclaimed ✓ back to 404`, "ok");
     closeModal();
-    refreshBalance(); refreshMine(); refreshClaimed();
+    refreshBalance(); refreshMine(); refreshClaimed(); refreshLIFO();
   } catch (e) {
     if (btn) { btn.textContent = origLabel; btn.disabled = false; }
     setStatus("unclaim failed: " + (e.data?.message || e.message).slice(0,80), "err");
@@ -503,6 +520,65 @@ async function waitReceipt(hash) {
 }
 
 // ---------- REFRESH ----------
+// Refresh the LIFO panel — shows the next slugg that would burn on a sell + the ETH quote
+async function refreshLIFO() {
+  if (!walletAddr) { $("lifo-panel").style.display = "none"; return; }
+  try {
+    const r = await ethCall(TOKEN, "0x" + SEL_INVENTORY_OF + encAddr(walletAddr));
+    const ids = decUintArray(r);
+    if (ids.length === 0) { $("lifo-panel").style.display = "none"; return; }
+    const targetId = ids[ids.length - 1];
+
+    $("lifo-panel").style.display = "block";
+    $("lifo-id").textContent = `#${targetId}`;
+
+    // Mini animation preview
+    const previewBox = $("lifo-preview");
+    previewBox.innerHTML = '<div class="skeleton" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#333;font-size:8px;">…</div>';
+    try {
+      const uriR = await ethCall(TOKEN, "0x" + SEL_TOKENURI + encU256(targetId));
+      const meta = parseTokenURI(decodeString(uriR));
+      if (meta.animation_url) {
+        previewBox.innerHTML = "";
+        const ifr = document.createElement("iframe");
+        ifr.setAttribute("sandbox", "allow-scripts");
+        ifr.style.cssText = "width:100%;height:100%;border:0;display:block;pointer-events:none;";
+        ifr.srcdoc = meta.animation_url.slice("data:text/html;utf8,".length);
+        previewBox.appendChild(ifr);
+      }
+    } catch { /* ignore preview errors */ }
+
+    // Quote ETH out
+    $("lifo-quote").textContent = "quoting…";
+    try {
+      const allowR = await ethCall(TOKEN, "0xdd62ed3e" + encAddr(walletAddr) + encAddr(SWAP));
+      if (decUint(allowR) >= 1000n) {
+        const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800);
+        const data = "0xd3c9727c" + encU256(1000) + encU256(0) + deadline.toString(16).padStart(64, "0");
+        const qr = await rpc("eth_call", [{ to: SWAP, data, from: walletAddr }, "latest"]);
+        const ethOut = decUint(qr);
+        const ethDisplay = ethOut > 1_000_000_000_000_000n
+          ? `${(Number(ethOut) / 1e18).toFixed(6)} ETH`
+          : `${ethOut} wei`;
+        $("lifo-quote").textContent = `you'll receive ~${ethDisplay}`;
+      } else {
+        $("lifo-quote").innerHTML = `<span style="color:var(--warn);">first sell needs approve (2 txs)</span>`;
+      }
+    } catch {
+      $("lifo-quote").innerHTML = `<span style="color:var(--err);">quote failed</span>`;
+    }
+
+    // Wire buttons
+    $("lifo-sell").disabled = false;
+    $("lifo-sell").onclick = () => sellSlugg();  // opens the existing confirm dialog
+    $("lifo-protect").disabled = false;
+    $("lifo-protect").textContent = `CLAIM TO PROTECT #${targetId}`;
+    $("lifo-protect").onclick = () => claim(targetId);
+  } catch (e) {
+    $("lifo-panel").style.display = "none";
+  }
+}
+
 async function refreshTotal() {
   try {
     const r = await ethCall(TOKEN, "0x" + SEL_NEXTSLUGGID);
@@ -696,7 +772,6 @@ async function openItem(id, contract) {
       const ethFee = Number(fees.claim) / 1e18;
       $("modal-action").innerHTML = `
         <button onclick="claim(${id})">CLAIM → ERC-721 (${ethFee} ETH)</button>
-        <button class="ghost" onclick="sellSlugg()" title="LIFO: sells your last-minted slugg, not necessarily this one">SELL (LIFO)</button>
       `;
     } else if (isOwner && isClaimed) {
       const fees = await ensureFees();
@@ -726,10 +801,22 @@ async function sellSlugg() {
   const check = $("sell-confirm-check");
   const sellBtn = $("sell-confirm-btn");
   const protectBtn = $("sell-confirm-protect");
+  sellBtn.textContent = "SELL FOR ETH";
   check.checked = false;
   sellBtn.disabled = true;
   check.onchange = () => { sellBtn.disabled = !check.checked; };
-  sellBtn.onclick = () => { cancelSell(); _doSellLIFO(); };
+  sellBtn.onclick = async () => {
+    sellBtn.disabled = true;
+    sellBtn.textContent = "AWAITING WALLET…";
+    try {
+      await _doSellLIFO();
+      cancelSell();
+    } catch (e) {
+      sellBtn.disabled = false;
+      sellBtn.textContent = "SELL FOR ETH";
+      setStatus("sell failed: " + (e.data?.message || e.message || String(e)).slice(0,80), "err");
+    }
+  };
   // Look up the actual LIFO target — it's the LAST entry in inventoryOf
   $("sell-confirm-target").textContent = "looking up…";
   $("sell-confirm-num").textContent = "—";
