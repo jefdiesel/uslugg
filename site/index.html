@@ -1,1 +1,368 @@
-<!doctype html><html><head><meta charset='utf-8'><title>uSlugg POC</title><style>body{margin:0;background:#111;color:#eee;font:4px monospace;padding:16px}h1{color:#c3ff00}.g{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.c{background:#000;border:1px solid #333}.c iframe{width:100%;aspect-ratio:1;border:0;display:block}.l{padding:6px;font-size:10px;color:#888;border-top:1px solid #222}</style></head><body><h1>USLUGG BETA POC - 4 FRESH MINTS</h1><p>Each frame below is the tokenURI animation_url running in an iframe sandbox, exactly as a wallet would render it.</p><div class='g'><div class='c'><iframe src='uslugg-0.html'></iframe><div class='l'>#0</div></div><div class='c'><iframe src='uslugg-1.html'></iframe><div class='l'>#1</div></div><div class='c'><iframe src='uslugg-2.html'></iframe><div class='l'>#2</div></div><div class='c'><iframe src='uslugg-3.html'></iframe><div class='l'>#3</div></div></div></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>uSlugg — Sepolia testnet</title>
+<style>
+  :root { --bg:#0a0a0a; --fg:#e8e8e8; --muted:#888; --accent:#c3ff00; --border:#222; --card:#141414; --err:#e06b6b; --warn:#d6a64a; }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--fg); font:13px ui-monospace,"JetBrains Mono",Menlo,monospace; margin:0; padding:24px; }
+  .wrap { max-width:1280px; margin:0 auto; }
+  header { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  h1 { color:var(--accent); font-size:26px; margin:0; letter-spacing:3px; }
+  .badge { font-size:9px; letter-spacing:2px; color:#000; background:var(--accent); padding:3px 8px; border-radius:3px; }
+  .sub { color:var(--muted); font-size:11px; margin:6px 0 16px; line-height:1.7; }
+  .sub a { color:var(--accent); }
+  .bar { display:grid; grid-template-columns:auto 1fr auto auto; gap:8px; align-items:center; margin-bottom:8px; padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--card); }
+  @media (max-width:640px) { .bar { grid-template-columns:1fr 1fr; } .bar > .info { grid-column:1/-1; } }
+  .bar .info { color:var(--muted); font-size:11px; }
+  .bar .info b { color:var(--fg); }
+  button { background:var(--accent); color:#000; border:0; cursor:pointer; font:inherit; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:2px; padding:10px 18px; border-radius:4px; white-space:nowrap; }
+  button:hover:not(:disabled) { filter:brightness(1.1); }
+  button:disabled { background:#333; color:#666; cursor:not-allowed; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button.ghost:hover:not(:disabled) { background:var(--accent); color:#000; }
+  button.tiny { padding:4px 8px; font-size:9px; letter-spacing:1px; }
+  input[type=number] { background:#000; color:var(--fg); border:1px solid var(--border); padding:8px 12px; font:inherit; font-size:13px; border-radius:4px; width:80px; }
+  .status { color:var(--muted); font-size:11px; min-height:1.5em; padding:0 4px; }
+  .status.ok  { color:var(--accent); }
+  .status.err { color:var(--err); }
+  .status.pending { color:var(--warn); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:4px; overflow:hidden; }
+  .frame { aspect-ratio:1; background:#000; position:relative; }
+  .frame iframe { width:100%; height:100%; border:0; display:block; }
+  .frame .skeleton { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#333; font-size:9px; letter-spacing:2px; background:linear-gradient(45deg,#0a0a0a,#1a1a1a,#0a0a0a); animation:pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100% { opacity:0.5; } 50% { opacity:1; } }
+  .lbl { padding:6px 8px; font-size:10px; color:var(--accent); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:6px; }
+  .lbl a { color:var(--muted); text-decoration:none; }
+  .lbl a:hover { color:var(--accent); }
+  .empty { padding:40px; text-align:center; color:var(--muted); border:1px dashed var(--border); border-radius:4px; }
+  a { color:var(--accent); }
+  .addr { font-family:inherit; word-break:break-all; }
+  hr.sep { border:0; border-top:1px solid var(--border); margin:24px 0; }
+  h2 { font-size:14px; color:var(--muted); letter-spacing:2px; margin:0 0 12px; }
+  .info-box { padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--card); font-size:11px; color:var(--muted); line-height:1.7; }
+  .info-box b { color:var(--fg); }
+  details { background:var(--card); border:1px solid var(--border); border-radius:6px; padding:8px 12px; margin-top:8px; }
+  details summary { cursor:pointer; font-size:11px; color:var(--accent); letter-spacing:2px; }
+  details[open] summary { margin-bottom:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>uSlugg</h1>
+    <span class="badge">SEPOLIA TESTNET</span>
+  </header>
+  <p class="sub">
+    animated on-chain generative art · each mint = a fresh seed → a unique smear pattern that runs forever in your wallet.<br>
+    free to mint here — need Sepolia ETH? grab some from the <a href="https://sepoliafaucet.com/" target="_blank">Alchemy faucet</a> or <a href="https://sepolia-faucet.pk910.de/" target="_blank">PoW faucet</a>.
+  </p>
+
+  <div class="bar">
+    <button id="btn-connect">Connect wallet</button>
+    <span class="info">
+      <span id="wallet-state">not connected</span>
+      &nbsp;·&nbsp; total minted: <b id="total">—</b> / 10000
+    </span>
+    <input id="mint-count" type="number" min="1" max="20" value="1" title="how many to mint (1-20)">
+    <button id="btn-mint" disabled>Mint</button>
+  </div>
+  <div class="status" id="status"></div>
+
+  <div class="info-box" style="margin-bottom:8px; border-left:3px solid var(--accent); font-size:13px; line-height:1.8;">
+    <b style="color:var(--accent); font-size:15px; letter-spacing:1px;">WHAT IS THIS</b><br>
+    <b>uSlugg</b> is <b>animated</b> generative art. Each piece is <b>1-3 panels</b> of patterns (noise / checkerboard / stripes / etc.) that <b>smear</b> across the canvas, fade, and re-emerge forever. <br>
+    Fully on-chain: <b>seed</b> in contract storage · <b>renderer</b> + <b>JS runtime</b> are bytecode-stored · your wallet animates them live.<br>
+    Testnet uses a public-mint contract. <b>Real launch will be a v4 hook + 404 hybrid</b> — sluggs mint as you swap.
+  </div>
+
+  <hr class="sep">
+
+  <h2>YOUR SLUGGS</h2>
+  <div id="mine" class="grid"></div>
+  <div id="mine-empty" class="empty">no sluggs yet — connect + mint above</div>
+
+  <hr class="sep">
+
+  <h2>RECENT MINTS (LATEST 24)</h2>
+  <div id="all" class="grid"></div>
+
+  <p class="sub" style="margin-top:32px; font-size:10px;">
+    Token: <a class="addr" target="_blank" id="link-token">—</a><br>
+    Renderer (live): <a class="addr" target="_blank" id="link-renderer">—</a><br>
+    Runtime (live): <a class="addr" target="_blank" id="link-runtime">—</a>
+  </p>
+</div>
+
+<script>
+const CHAIN          = "eth-sepolia";
+const CHAIN_ID_HEX   = "0xaa36a7";
+const TOKEN          = "0xef27007372797Fceb6a5Af85a77b83dD644f2A32";
+
+const SEL_MINT        = "a0712d68";
+const SEL_BALANCEOF   = "70a08231";
+const SEL_OWNEROF     = "6352211e";
+const SEL_TOKENURI    = "c87b56dd";
+const SEL_TOTALSUPPLY = "18160ddd";
+const SEL_RENDERER    = "8ada6b0f";
+const SEL_RUNTIME     = "54d75aa6";
+
+const $ = id => document.getElementById(id);
+let walletAddr = null;
+const renderedIds = new Set();   // dedup across mine + all sections
+
+// ---------- RPC ----------
+async function rpc(method, params) {
+  const r = await fetch(`/api/rpc?chain=${CHAIN}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error.message || "rpc");
+  return j.result;
+}
+function ethCall(to, data) { return rpc("eth_call", [{ to, data }, "latest"]); }
+function encU256(n) { return BigInt(n).toString(16).padStart(64, "0"); }
+function decUint(hex) { return BigInt(hex); }
+function decAddr(hex) { return "0x" + hex.slice(-40); }
+
+function decodeString(hex) {
+  if (hex.startsWith("0x")) hex = hex.slice(2);
+  const len = parseInt(hex.slice(64, 128), 16);
+  const dataHex = hex.slice(128, 128 + len * 2);
+  const out = new Uint8Array(len);
+  for (let i = 0; i < len; i++) out[i] = parseInt(dataHex.slice(i*2, i*2+2), 16);
+  return new TextDecoder("utf-8").decode(out);
+}
+
+function parseTokenURI(uri) {
+  if (uri.startsWith("data:application/json;utf8,")) return JSON.parse(uri.slice(27));
+  if (uri.startsWith("data:application/json;base64,")) return JSON.parse(atob(uri.slice(29)));
+  throw new Error("bad uri");
+}
+
+// ---------- Lazy-load iframe via IntersectionObserver ----------
+// Cards stay as skeleton placeholders until visible — first 50 mints don't
+// crash mobile, no animations chew CPU off-screen.
+const lazyObserver = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (e.isIntersecting) {
+      const card = e.target;
+      const id = Number(card.dataset.id);
+      if (!card.dataset.loaded) {
+        card.dataset.loaded = "1";
+        loadSluggInto(card, id);
+      }
+    }
+  }
+}, { rootMargin: "200px" });
+
+async function loadSluggInto(card, id) {
+  const frame = card.querySelector(".frame");
+  try {
+    const data = "0x" + SEL_TOKENURI + encU256(id);
+    const raw = await ethCall(TOKEN, data);
+    const meta = parseTokenURI(decodeString(raw));
+    if (meta.animation_url && meta.animation_url.startsWith("data:text/html;utf8,")) {
+      frame.innerHTML = '';
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute("sandbox", "allow-scripts");
+      iframe.srcdoc = meta.animation_url.slice("data:text/html;utf8,".length);
+      frame.appendChild(iframe);
+    } else {
+      frame.innerHTML = '<div class="skeleton">no animation_url</div>';
+    }
+  } catch (e) {
+    frame.innerHTML = `<div class="skeleton">err: ${e.message.slice(0,40)}</div>`;
+  }
+}
+
+function makeCard(id) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.dataset.id = id;
+  card.innerHTML = `
+    <div class="lbl">
+      <span class="copy-id" title="click to copy" data-copy="${id}" style="cursor:pointer;">#${id}</span>
+      <a href="https://sepolia.etherscan.io/token/${TOKEN}?a=${id}" target="_blank">etherscan ↗</a>
+    </div>
+    <div class="frame"><div class="skeleton">slugg #${id}</div></div>
+  `;
+  card.querySelector(".copy-id").onclick = (e) => {
+    navigator.clipboard.writeText(e.target.dataset.copy);
+    const orig = e.target.textContent;
+    e.target.textContent = "copied ✓";
+    setTimeout(() => { e.target.textContent = orig; }, 800);
+  };
+  lazyObserver.observe(card);
+  return card;
+}
+
+// ---------- Wallet ----------
+async function connect() {
+  if (!window.ethereum) { setStatus("install MetaMask to mint", "err"); return; }
+  try {
+    const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    walletAddr = accounts[0];
+    const chainId = await window.ethereum.request({ method: "eth_chainId" });
+    if (chainId !== CHAIN_ID_HEX) {
+      try {
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: CHAIN_ID_HEX }] });
+      } catch (e) { setStatus("wrong chain — switch to Sepolia", "err"); return; }
+    }
+    $("wallet-state").innerHTML = `connected: <b>${walletAddr.slice(0,6)}…${walletAddr.slice(-4)}</b> <button class="tiny ghost" onclick="navigator.clipboard.writeText('${walletAddr}')">copy</button>`;
+    $("btn-connect").textContent = "Disconnect";
+    $("btn-connect").onclick = () => { walletAddr = null; location.reload(); };
+    $("btn-mint").disabled = false;
+    setStatus("ready", "ok");
+    refreshMine();
+  } catch (e) { setStatus("connect failed: " + e.message, "err"); }
+}
+
+// ---------- Mint ----------
+async function mint() {
+  if (!walletAddr) { setStatus("connect first", "err"); return; }
+  const count = Math.max(1, Math.min(20, parseInt($("mint-count").value, 10) || 1));
+  const data = "0x" + SEL_MINT + encU256(count);
+  setStatus(`minting ${count}…`, "pending");
+  $("btn-mint").disabled = true;
+  try {
+    const txHash = await window.ethereum.request({
+      method: "eth_sendTransaction",
+      params: [{ from: walletAddr, to: TOKEN, data }],
+    });
+    setStatus(`tx sent: ${txHash.slice(0,12)}… waiting`, "pending");
+    await waitReceipt(txHash);
+    setStatus(`minted ${count} slugg${count>1?"s":""} ✓`, "ok");
+    renderedIds.clear();
+    refreshTotal();
+    await Promise.all([refreshAll(), refreshMine()]);
+  } catch (e) {
+    const msg = e.data?.message || e.message || String(e);
+    setStatus("mint failed: " + msg, "err");
+  } finally {
+    $("btn-mint").disabled = false;
+  }
+}
+
+async function waitReceipt(hash) {
+  for (let i = 0; i < 60; i++) {
+    const r = await rpc("eth_getTransactionReceipt", [hash]).catch(() => null);
+    if (r && r.blockNumber) return r.status === "0x1";
+    await new Promise(res => setTimeout(res, 2000));
+  }
+  throw new Error("receipt timeout");
+}
+
+// ---------- Refresh sections ----------
+async function refreshTotal() {
+  try {
+    const r = await ethCall(TOKEN, "0x" + SEL_TOTALSUPPLY);
+    $("total").textContent = decUint(r).toString();
+  } catch { $("total").textContent = "?"; }
+}
+
+function setAddrLink(elId, addr) {
+  const el = $(elId);
+  el.href = `https://sepolia.etherscan.io/address/${addr}`;
+  el.textContent = addr;
+  el.title = "click to copy";
+  el.style.cursor = "copy";
+  el.onclick = (e) => {
+    e.preventDefault();
+    navigator.clipboard.writeText(addr);
+    const orig = el.textContent;
+    el.textContent = "copied ✓ " + addr;
+    setTimeout(() => { el.textContent = orig; }, 800);
+  };
+}
+
+async function refreshActiveAddresses() {
+  try {
+    setAddrLink("link-token", TOKEN);
+    const r1 = await ethCall(TOKEN, "0x" + SEL_RENDERER);
+    setAddrLink("link-renderer", decAddr(r1));
+    const r2 = await ethCall(decAddr(r1), "0x" + SEL_RUNTIME);
+    setAddrLink("link-runtime", decAddr(r2));
+  } catch (e) { /* ignore */ }
+}
+
+async function refreshMine() {
+  if (!walletAddr) return;
+  $("mine").innerHTML = '<div class="empty" style="grid-column:1/-1;">scanning ownership…</div>';
+  $("mine-empty").style.display = "none";
+  try {
+    const totalRaw = await ethCall(TOKEN, "0x" + SEL_TOTALSUPPLY);
+    const total = Number(decUint(totalRaw));
+    if (total === 0) { $("mine").innerHTML = ""; $("mine-empty").style.display = "block"; return; }
+
+    // Chunked ownerOf scan: 8 in flight at a time. 200 simultaneous Alchemy
+    // calls can exceed CU rate, causing "rpc" errors. Chunked is reliable.
+    const myAddr = walletAddr.toLowerCase();
+    const start = Math.max(0, total - 200);
+    const ids = [];
+    const CHUNK = 8;
+    for (let cursor = start; cursor < total; cursor += CHUNK) {
+      const end = Math.min(total, cursor + CHUNK);
+      const owners = await Promise.all(
+        Array.from({length: end - cursor}, (_, i) =>
+          ethCall(TOKEN, "0x" + SEL_OWNEROF + encU256(cursor + i)).catch(() => null)
+        )
+      );
+      owners.forEach((r, i) => { if (r && decAddr(r).toLowerCase() === myAddr) ids.push(cursor + i); });
+    }
+    ids.sort((a,b) => b - a);
+
+    $("mine").innerHTML = "";
+    if (ids.length === 0) { $("mine-empty").style.display = "block"; return; }
+    for (const id of ids) {
+      $("mine").appendChild(makeCard(id));
+      renderedIds.add(id);
+    }
+  } catch (e) {
+    $("mine").innerHTML = `<div class="empty" style="grid-column:1/-1;color:var(--err);">scan failed: ${e.message}</div>`;
+  }
+}
+
+async function refreshAll() {
+  $("all").innerHTML = "";
+  try {
+    const totalRaw = await ethCall(TOKEN, "0x" + SEL_TOTALSUPPLY);
+    const total = Number(decUint(totalRaw));
+    if (total === 0) {
+      $("all").innerHTML = '<div class="empty" style="grid-column:1/-1;">no mints yet — be the first</div>';
+      return;
+    }
+    const start = Math.max(0, total - 24);
+    for (let id = total - 1; id >= start; id--) {
+      $("all").appendChild(makeCard(id));
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function setStatus(msg, kind) {
+  const el = $("status");
+  el.textContent = msg;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+$("btn-connect").onclick = connect;
+$("btn-mint").onclick = mint;
+
+(async function init() {
+  refreshActiveAddresses();
+  refreshTotal();
+  refreshAll();
+  if (window.ethereum) {
+    try {
+      const accounts = await window.ethereum.request({ method: "eth_accounts" });
+      if (accounts.length > 0) connect();
+    } catch {}
+  }
+})();
+</script>
+</body>
+</html>
