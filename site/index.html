@@ -159,6 +159,7 @@ const CHAIN_ID_HEX   = "0xaa36a7";
 const TOKEN          = "0x4bA863eeD307c00eD3C09ff45d4733A21FFA17a4"; // USlugg404 (v4 stack)
 const CLAIMED        = "0xb4EEFF39DFe18329b6ba5D99e2Fd8f3C5632d1Ad"; // USluggClaimed
 const MINT_HELPER    = "0xf274E77145166dda3627a78994ac78BA7b0aA6b4"; // open-amount mint helper
+const SWAP           = "0xB51bA4dE545d6cD59ae490D8A91d36372db777b7"; // USluggSwap → v4 pool
 const TOKENS_PER_SLUGG = 1000n;  // 3 decimals → 1.000 USLUG = 1 NFT
 
 const SEL_BALANCEOF      = "70a08231"; // balanceOf(address)
@@ -676,27 +677,47 @@ function closeModal() {
   $("modal").style.display = "none";
   $("modal-frame").innerHTML = "";
 }
-// Sell 1 USLUG by transferring it back to the mint helper. The 404 burns the
-// caller's LIFO slugg automatically. Note: testnet beta — no ETH back, just
-// returns the slugg to the supply pool. Production would route via USluggSwap.
+// Real sell: routes 1 USLUG through USluggSwap → v4 pool, returns ETH proceeds.
+// Two-step the first time (approve → sell). Subsequent sells reuse the allowance.
 async function sellSlugg() {
   if (!walletAddr) return;
   const btn = document.querySelector("#modal-action .ghost");
   const orig = btn?.textContent || "";
-  if (btn) { btn.textContent = "SELLING…"; btn.disabled = true; }
-  setStatus("selling 1 slugg (LIFO)…", "pending");
+  const SEL_ALLOWANCE = "dd62ed3e";
+  const SEL_APPROVE   = "095ea7b3";
+  const SEL_SELL      = "d3c9727c"; // sell(uint256 amount, uint256 minEthOut, uint256 deadline)
+  const usluggIn = 1000n; // 1.000 USLUG (3 decimals → 1000 raw)
+
   try {
-    // ERC-20 transfer(MINT_HELPER, 1.000 USLUG = 1000 raw)
-    const SEL_TRANSFER = "a9059cbb";
-    const data = "0x" + SEL_TRANSFER + encAddr(MINT_HELPER) + encU256(1000);
+    // 1. Check allowance — if too low, approve max first
+    const allowR = await ethCall(TOKEN, "0x" + SEL_ALLOWANCE + encAddr(walletAddr) + encAddr(SWAP));
+    if (decUint(allowR) < usluggIn) {
+      if (btn) { btn.textContent = "APPROVING…"; btn.disabled = true; }
+      setStatus("approving USLUG → swap router…", "pending");
+      const approveData = "0x" + SEL_APPROVE + encAddr(SWAP) + "f".repeat(64); // type(uint256).max
+      const approveTx = await window.ethereum.request({
+        method: "eth_sendTransaction",
+        params: [{ from: walletAddr, to: TOKEN, data: approveData }],
+      });
+      await waitReceipt(approveTx);
+    }
+    // 2. Sell 1.000 USLUG → ETH via the swap router (single-leg v4 swap)
+    if (btn) { btn.textContent = "SELLING…"; btn.disabled = true; }
+    setStatus("selling 1 slugg → ETH…", "pending");
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800); // +30 min
+    const minEthOut = 0n; // accept any ETH out (testnet)
+    const sellData = "0x" + SEL_SELL
+      + usluggIn.toString(16).padStart(64, "0")
+      + minEthOut.toString(16).padStart(64, "0")
+      + deadline.toString(16).padStart(64, "0");
     const txHash = await window.ethereum.request({
       method: "eth_sendTransaction",
-      params: [{ from: walletAddr, to: TOKEN, data }],
+      params: [{ from: walletAddr, to: SWAP, data: sellData }],
     });
     if (btn) btn.textContent = "CONFIRMING…";
     setStatus(`sell tx ${txHash.slice(0,12)}…`, "pending");
     await waitReceipt(txHash);
-    setStatus("sold ✓ slugg burned (LIFO)", "ok");
+    setStatus("sold ✓ ETH returned (LIFO slugg burned)", "ok");
     closeModal();
     refreshBalance(); refreshMine(); refreshAll();
   } catch (e) {
