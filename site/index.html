@@ -101,25 +101,11 @@
     <div style="display:flex; gap:6px; align-items:center;">
       <input id="mint-count" type="number" min="1" max="100" value="1" style="background:#000;color:var(--fg);border:1px solid var(--border);padding:8px 12px;font:inherit;border-radius:4px;width:64px;">
       <button id="btn-mint" disabled>BUY</button>
+      <button id="btn-sell" disabled style="background:var(--err);color:#fff;">SELL</button>
     </div>
     <div class="status" id="status" style="flex-basis:100%; margin-top:4px;"></div>
   </div>
 
-  <!-- LIFO SELL PANEL — shows the next-to-burn slugg with sell + protect buttons -->
-  <div id="lifo-panel" style="display:none; margin-top:8px; padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--card);">
-    <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
-      <div id="lifo-preview" style="width:80px; height:80px; flex-shrink:0; background:#000; border:1px solid var(--border); border-radius:4px; overflow:hidden;"></div>
-      <div style="flex:1; min-width:160px;">
-        <div style="font-size:10px; color:var(--muted); letter-spacing:2px;">NEXT TO SELL (LIFO)</div>
-        <div id="lifo-id" style="font-size:18px; color:var(--err); font-weight:600; margin:2px 0;">—</div>
-        <div id="lifo-quote" style="font-size:11px; color:var(--accent);">—</div>
-      </div>
-      <div style="display:flex; gap:6px;">
-        <button id="lifo-protect" class="ghost" disabled>CLAIM TO PROTECT</button>
-        <button id="lifo-sell" disabled style="background:var(--err); color:#fff;">SELL FOR ETH</button>
-      </div>
-    </div>
-  </div>
 
   <hr class="sep">
 
@@ -154,14 +140,17 @@
     <div style="font-size:13px; line-height:1.7; color:var(--fg);">
       <p style="margin:0 0 14px;">The hybrid token sells in <b>last-in, first-out</b> order. Selling 1 slugg burns the <b>most-recently-minted</b> slugg in your inventory — not the one you opened the modal on.</p>
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:0 0 16px;">
-        <div style="padding:12px; background:#1a0a0a; border:2px solid var(--err); border-radius:4px;">
-          <div style="font-size:10px; color:var(--muted); letter-spacing:2px;">⚠ WILL BURN</div>
-          <div id="sell-confirm-target" style="font-size:16px; color:var(--err); margin-top:6px; font-weight:600;">—</div>
-        </div>
-        <div style="padding:12px; background:#0a1a05; border:1px solid var(--accent); border-radius:4px;">
-          <div style="font-size:10px; color:var(--muted); letter-spacing:2px;">YOU RECEIVE</div>
-          <div id="sell-confirm-eth" style="font-size:16px; color:var(--accent); margin-top:6px; font-weight:600;">—</div>
+      <div style="display:flex; gap:10px; margin:0 0 16px; align-items:stretch;">
+        <div id="sell-confirm-preview" style="width:120px; height:120px; flex-shrink:0; background:#000; border:2px solid var(--err); border-radius:4px; overflow:hidden;"></div>
+        <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+          <div style="padding:10px; background:#1a0a0a; border:1px solid var(--err); border-radius:4px;">
+            <div style="font-size:10px; color:var(--muted); letter-spacing:2px;">⚠ WILL BURN</div>
+            <div id="sell-confirm-target" style="font-size:16px; color:var(--err); margin-top:4px; font-weight:600;">—</div>
+          </div>
+          <div style="padding:10px; background:#0a1a05; border:1px solid var(--accent); border-radius:4px;">
+            <div style="font-size:10px; color:var(--muted); letter-spacing:2px;">YOU RECEIVE</div>
+            <div id="sell-confirm-eth" style="font-size:14px; color:var(--accent); margin-top:4px; font-weight:600;">—</div>
+          </div>
         </div>
       </div>
 
@@ -414,11 +403,11 @@ async function connect() {
     $("btn-connect").classList.add("ghost");
     $("btn-connect").onclick = () => { walletAddr = null; location.reload(); };
     $("btn-mint").disabled = false;
+    $("btn-sell").disabled = false;
     setStatus("ready", "ok");
     refreshBalance();
     refreshMine();
     refreshClaimed();
-    refreshLIFO();
   } catch (e) { setStatus("connect failed: " + e.message, "err"); }
 }
 
@@ -479,7 +468,7 @@ async function claim(id) {
     await waitReceipt(txHash);
     setStatus(`#${id} claimed ✓ now an ERC-721`, "ok");
     closeModal();
-    refreshBalance(); refreshMine(); refreshClaimed(); refreshLIFO();
+    refreshBalance(); refreshMine(); refreshClaimed();
   } catch (e) {
     if (btn) { btn.textContent = origLabel; btn.disabled = false; }
     setStatus("claim failed: " + (e.data?.message || e.message).slice(0,80), "err");
@@ -503,7 +492,7 @@ async function unclaim(id) {
     await waitReceipt(txHash);
     setStatus(`#${id} unclaimed ✓ back to 404`, "ok");
     closeModal();
-    refreshBalance(); refreshMine(); refreshClaimed(); refreshLIFO();
+    refreshBalance(); refreshMine(); refreshClaimed();
   } catch (e) {
     if (btn) { btn.textContent = origLabel; btn.disabled = false; }
     setStatus("unclaim failed: " + (e.data?.message || e.message).slice(0,80), "err");
@@ -520,45 +509,6 @@ async function waitReceipt(hash) {
 }
 
 // ---------- REFRESH ----------
-// Refresh the LIFO panel — shows the next slugg that would burn on a sell + the ETH quote
-async function refreshLIFO() {
-  if (!walletAddr) { $("lifo-panel").style.display = "none"; return; }
-  try {
-    const r = await ethCall(TOKEN, "0x" + SEL_INVENTORY_OF + encAddr(walletAddr));
-    const ids = decUintArray(r);
-    if (ids.length === 0) { $("lifo-panel").style.display = "none"; return; }
-    const targetId = ids[ids.length - 1];
-
-    $("lifo-panel").style.display = "block";
-    $("lifo-id").textContent = `#${targetId}`;
-    $("lifo-quote").textContent = ""; // quote only fetched when user clicks SELL
-
-    // Mini animation preview
-    const previewBox = $("lifo-preview");
-    previewBox.innerHTML = '<div class="skeleton" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#333;font-size:8px;">…</div>';
-    try {
-      const uriR = await ethCall(TOKEN, "0x" + SEL_TOKENURI + encU256(targetId));
-      const meta = parseTokenURI(decodeString(uriR));
-      if (meta.animation_url) {
-        previewBox.innerHTML = "";
-        const ifr = document.createElement("iframe");
-        ifr.setAttribute("sandbox", "allow-scripts");
-        ifr.style.cssText = "width:100%;height:100%;border:0;display:block;pointer-events:none;";
-        ifr.srcdoc = meta.animation_url.slice("data:text/html;utf8,".length);
-        previewBox.appendChild(ifr);
-      }
-    } catch { /* ignore preview errors */ }
-
-    // Wire buttons
-    $("lifo-sell").disabled = false;
-    $("lifo-sell").onclick = () => sellSlugg();
-    $("lifo-protect").disabled = false;
-    $("lifo-protect").textContent = `CLAIM TO PROTECT #${targetId}`;
-    $("lifo-protect").onclick = () => claim(targetId);
-  } catch (e) {
-    $("lifo-panel").style.display = "none";
-  }
-}
 
 async function refreshTotal() {
   try {
@@ -808,10 +758,11 @@ async function sellSlugg() {
     const ids = decUintArray(r);
     if (ids.length === 0) {
       $("sell-confirm-target").textContent = "(none — your inventory is empty)";
+      $("sell-confirm-preview").innerHTML = '';
       sellBtn.disabled = true;
     } else {
       const targetId = ids[ids.length - 1];
-      $("sell-confirm-target").innerHTML = `slugg <b>#${targetId}</b> · last in your inventory`;
+      $("sell-confirm-target").innerHTML = `slugg <b>#${targetId}</b>`;
       $("sell-confirm-num").textContent = targetId;
       protectBtn.textContent = `PROTECT #${targetId}`;
       protectBtn.disabled = false;
@@ -821,6 +772,22 @@ async function sellSlugg() {
         cancelSell();
         await claim(targetId);
       };
+
+      // Populate animation preview
+      const previewBox = $("sell-confirm-preview");
+      previewBox.innerHTML = '<div class="skeleton" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#333;font-size:8px;">…</div>';
+      try {
+        const uriR = await ethCall(TOKEN, "0x" + SEL_TOKENURI + encU256(targetId));
+        const meta = parseTokenURI(decodeString(uriR));
+        if (meta.animation_url) {
+          previewBox.innerHTML = "";
+          const ifr = document.createElement("iframe");
+          ifr.setAttribute("sandbox", "allow-scripts");
+          ifr.style.cssText = "width:100%;height:100%;border:0;display:block;pointer-events:none;";
+          ifr.srcdoc = meta.animation_url.slice("data:text/html;utf8,".length);
+          previewBox.appendChild(ifr);
+        }
+      } catch { /* ignore */ }
       // Quote the ETH amount the sell will return — simulate sell() if allowance is set
       $("sell-confirm-eth").textContent = "quoting…";
       try {
@@ -908,6 +875,7 @@ $("modal").onclick = (e) => { if (e.target === $("modal")) closeModal(); };
 
 $("btn-connect").onclick = connect;
 $("btn-mint").onclick = buySluggs;
+$("btn-sell").onclick = sellSlugg;
 
 (async function init() {
   refreshActiveAddresses();
