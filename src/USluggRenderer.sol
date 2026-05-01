@@ -12,7 +12,10 @@ interface IRuntime { function data() external pure returns (bytes memory); }
 contract USluggRenderer is IUSluggRenderer {
     address public immutable runtime;
 
+    error RuntimeZero();
+
     constructor(address _runtime) {
+        if (_runtime == address(0)) revert RuntimeZero();
         runtime = _runtime;
     }
 

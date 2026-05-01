@@ -21,6 +21,8 @@ import {IUSluggClaimed}   from "../src/IUSluggClaimed.sol";
 ///
 /// Env (all optional, defaults built in):
 ///   POOL_MANAGER     — v4 PoolManager (chain-id presets, mainnet/Base/etc.)
+///   DEPLOYER         — broadcasting address (overrides PRIVATE_KEY-derived). Use
+///                      this when broadcasting via --account / keystore (no PK in env).
 ///   TREASURY         — initial supply recipient (defaults to deployer)
 ///   MAX_SLUGGS       — collection cap (default 10000)
 ///   TOKENS_PER_SLUGG — wei per Slugg (default 1e3 = 1.000 USLUG given decimals=3)
@@ -32,7 +34,10 @@ contract DeployUslugg is Script {
     address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
     function run() external {
-        address deployer  = msg.sender;
+        // Pre-broadcast msg.sender is forge's default sender unless --sender is
+        // passed, NOT the address that --private-key resolves to. Resolving the
+        // real broadcaster ourselves keeps the mainnet HOOK_OWNER guard honest.
+        address deployer  = _resolveDeployer();
         address treasury  = _envAddrOr("TREASURY", deployer);
         address poolMgr   = _envAddrOr("POOL_MANAGER", _defaultPoolManager(block.chainid));
         address hookOwner = _envAddrOr("HOOK_OWNER", deployer);
@@ -92,10 +97,13 @@ contract DeployUslugg is Script {
         USluggClaimed claimedNft = new USluggClaimed(address(token), IUSluggRenderer(address(renderer)));
         token.setClaimedNft(IUSluggClaimed(address(claimedNft)));
 
-        // Hand off hook ownership last (no-op if HOOK_OWNER unset / == deployer)
+        // Propose hook ownership handoff (no-op if HOOK_OWNER unset / == deployer).
+        // Two-step: HOOK_OWNER must call acceptOwnership() afterwards to finalize.
+        // Until then, deployer retains control — that's the safety net against typos.
         if (hookOwner != deployer) {
             hook.transferOwnership(hookOwner);
-            console2.log("Hook ownership transferred to:", hookOwner);
+            console2.log("Hook ownership PROPOSED to:", hookOwner);
+            console2.log("  -> have HOOK_OWNER call acceptOwnership() to finalize.");
         }
 
         vm.stopBroadcast();
@@ -125,6 +133,17 @@ contract DeployUslugg is Script {
 
     function _envUintOr(string memory key, uint256 dflt) internal view returns (uint256) {
         try vm.envUint(key) returns (uint256 v) { return v; } catch { return dflt; }
+    }
+
+    /// @dev Resolve the real broadcaster. Order: DEPLOYER env (explicit override),
+    /// then vm.addr(PRIVATE_KEY), then msg.sender (which is what forge supplies for
+    /// --sender/--account flows or simulations).
+    function _resolveDeployer() internal view returns (address) {
+        try vm.envAddress("DEPLOYER") returns (address d) { return d; } catch {}
+        try vm.envUint("PRIVATE_KEY") returns (uint256 pk) {
+            if (pk != 0) return vm.addr(pk);
+        } catch {}
+        return msg.sender;
     }
 
     function _defaultPoolManager(uint256 chainId) internal pure returns (address) {

@@ -28,16 +28,23 @@ contract USluggHook is IHooks, ISeedSource {
     uint64  public override swapCount;
 
     address public owner;
+    /// @dev Pending owner — the address proposed via transferOwnership() that
+    /// must call acceptOwnership() to actually take control. Two-step handoff
+    /// prevents a typo'd multisig address from permanently bricking governance.
+    address public pendingOwner;
     /// @dev Fee in basis points (10000 = 100%). Default 10 = 0.1%. Hard-capped at 100 = 1%.
     uint16  public feeBps = 10;
 
     error NotPoolManager();
     error NotOwner();
+    error NotPendingOwner();
     error HookNotImplemented();
     error FeeTooHigh();
 
     event FeeBpsSet(uint16 bps);
     event FeesWithdrawn(Currency indexed currency, address indexed to, uint256 amount);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     modifier onlyPoolManager() {
         if (msg.sender != address(poolManager)) revert NotPoolManager();
@@ -62,13 +69,30 @@ contract USluggHook is IHooks, ISeedSource {
         emit FeeBpsSet(bps);
     }
 
+    /// @notice Step 1 of two-step ownership handoff: current owner proposes
+    /// `newOwner`. No effect on `owner` until acceptOwnership() runs. Pass
+    /// address(0) to cancel a previously-proposed transfer.
     function transferOwnership(address newOwner) external onlyOwner {
-        owner = newOwner;
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    /// @notice Step 2: pendingOwner claims ownership. This is what guards
+    /// against typos in HOOK_OWNER on the deploy script — a wrong address
+    /// can never accept, so the original owner retains control until a
+    /// reachable address actually takes it.
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
+        address previous = owner;
+        owner = pendingOwner;
+        delete pendingOwner;
+        emit OwnershipTransferred(previous, owner);
     }
 
     /// @notice Withdraw accumulated fees. Hook holds real tokens (taken inline
     /// during afterSwap), so this is a simple transfer.
     function withdrawFees(Currency currency, address to, uint256 amount) external onlyOwner {
+        require(to != address(0), "to=0");
         if (Currency.unwrap(currency) == address(0)) {
             (bool ok, ) = to.call{value: amount}("");
             require(ok, "ETH transfer failed");
