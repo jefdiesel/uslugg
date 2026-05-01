@@ -93,6 +93,9 @@ contract USluggHook is IHooks, ISeedSource {
     /// during afterSwap), so this is a simple transfer.
     function withdrawFees(Currency currency, address to, uint256 amount) external onlyOwner {
         require(to != address(0), "to=0");
+        // CEI: emit before the external transfer. On revert the event is wiped
+        // along with the rest of the tx, so observable behavior is identical.
+        emit FeesWithdrawn(currency, to, amount);
         if (Currency.unwrap(currency) == address(0)) {
             (bool ok, ) = to.call{value: amount}("");
             require(ok, "ETH transfer failed");
@@ -102,7 +105,6 @@ contract USluggHook is IHooks, ISeedSource {
             );
             require(ok && (ret.length == 0 || abi.decode(ret, (bool))), "ERC20 transfer failed");
         }
-        emit FeesWithdrawn(currency, to, amount);
     }
 
     receive() external payable {}

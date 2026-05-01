@@ -63,7 +63,9 @@ contract USluggLPLocker {
         params[0] = abi.encode(tokenId, uint256(0), uint128(0), uint128(0), bytes(""));
         params[1] = abi.encode(currency0, currency1, feeRecipient);
 
-        posMgr.modifyLiquidities(abi.encode(actions, params), block.timestamp + 600);
+        // CEI: emit before the external call. If posMgr reverts the entire tx
+        // unwinds (event included) so observable behavior is identical.
         emit FeesCollected(tokenId, feeRecipient);
+        posMgr.modifyLiquidities(abi.encode(actions, params), block.timestamp + 600);
     }
 }

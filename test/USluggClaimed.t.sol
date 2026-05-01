@@ -27,6 +27,13 @@ contract USluggClaimedTest is Test {
         claimed  = new USluggClaimed(parent, IUSluggRenderer(address(renderer)));
     }
 
+    // -------- constructor guard --------
+
+    function test_constructor_rejects_zero_parent() public {
+        vm.expectRevert(USluggClaimed.Uslugg404Zero.selector);
+        new USluggClaimed(address(0), IUSluggRenderer(address(renderer)));
+    }
+
     // -------- access control: only USlugg404 (= parent) --------
 
     function test_only_parent_can_mint() public {

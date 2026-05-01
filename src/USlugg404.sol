@@ -3,12 +3,7 @@ pragma solidity ^0.8.24;
 
 import {ISeedSource}      from "./ISeedSource.sol";
 import {IUSluggRenderer}  from "./IUSluggRenderer.sol";
-import {IUSluggClaimed}   from "./IUSluggClaimed.sol";
-
-interface IUSluggClaimedRendererSet {
-    function setRenderer(IUSluggRenderer r) external;
-    function setRoyalty(address recipient, uint96 bps) external;
-}
+import {IUSluggClaimed, IUSluggClaimedAdmin} from "./IUSluggClaimed.sol";
 
 /// @notice Hybrid ERC-20 + Slugg NFT, with ERC-721 visibility events so wallets
 /// and explorers auto-detect the NFTs without an explicit claim.
@@ -91,6 +86,7 @@ contract USlugg404 {
     error InvalidRecipient();
     error Reentrant();
     error ZeroTokensPerSlugg();
+    error ZeroTreasury();       // initial supply must have a non-zero recipient
     error NotSluggHolder();
     error NotClaimedHolder();
     error ClaimedNotConfigured();
@@ -122,6 +118,10 @@ contract USlugg404 {
         uint256 _tokensPerSlugg
     ) {
         if (_tokensPerSlugg == 0) revert ZeroTokensPerSlugg();
+        // Initial supply (maxSluggs * tokensPerSlugg) lands in _treasury — must
+        // be a real address. setTreasury(0) afterwards is fine and explicitly
+        // disables the claim/unclaim fee path.
+        if (_treasury == address(0)) revert ZeroTreasury();
         owner          = msg.sender;
         seed           = _seed;
         treasury       = _treasury;
@@ -158,14 +158,14 @@ contract USlugg404 {
     /// @notice Owner passthrough so the Claimed ERC-721's renderer can be swapped.
     function setClaimedRenderer(address newRenderer) external onlyOwner {
         require(address(claimedNft) != address(0), "claimedNft not configured");
-        IUSluggClaimedRendererSet(address(claimedNft)).setRenderer(IUSluggRenderer(newRenderer));
+        IUSluggClaimedAdmin(address(claimedNft)).setRenderer(IUSluggRenderer(newRenderer));
     }
 
     /// @notice Owner passthrough for EIP-2981 royalty config on USluggClaimed.
     /// Marketplaces will pay this percentage of secondary sales to `recipient`.
     function setClaimedRoyalty(address recipient, uint96 bps) external onlyOwner {
         require(address(claimedNft) != address(0), "claimedNft not configured");
-        IUSluggClaimedRendererSet(address(claimedNft)).setRoyalty(recipient, bps);
+        IUSluggClaimedAdmin(address(claimedNft)).setRoyalty(recipient, bps);
     }
 
     function setTreasury(address payable t) external onlyOwner {
@@ -298,6 +298,8 @@ contract USlugg404 {
 
         Slugg memory c = sluggs[id];
 
+        // ---- EFFECTS: all internal state writes (and their describing events)
+        // happen before any external interaction.
         _removeFromInventory(msg.sender, id);
         delete sluggs[id];
         delete ownerOf[id];
@@ -307,15 +309,15 @@ contract USlugg404 {
             balanceOf[address(this)] += tokensPerSlugg;
         }
         emit Transfer(msg.sender, address(this), tokensPerSlugg);
+        emit SluggBurned(id, msg.sender);
+        emit Transfer721(msg.sender, address(0), id);
 
+        // ---- INTERACTIONS: external calls last.
         if (msg.value > 0) {
             (bool ok, ) = treasury.call{value: msg.value}("");
             if (!ok) revert TreasuryRejectedEth();
             emit ClaimFeePaid(msg.sender, treasury, msg.value);
         }
-
-        emit SluggBurned(id, msg.sender);
-        emit Transfer721(msg.sender, address(0), id);
 
         claimedId = claimedNft.mint(msg.sender, c.seed, id);
         emit SluggClaimed(msg.sender, id, claimedId, msg.value);
@@ -327,16 +329,11 @@ contract USlugg404 {
         if (treasury == address(0) && unclaimFeeWei > 0) revert TreasuryNotSet();
         if (msg.value != unclaimFeeWei) revert WrongUnclaimFee();
 
+        // Reads (staticcalls). Cached before effects so the CEI ordering below is clean.
         (bytes32 oldSeed,,) = claimedNft.claimed(claimedId);
+        uint64 swapNo       = seed.swapCount();
 
-        claimedNft.burn(claimedId);
-
-        if (msg.value > 0) {
-            (bool ok, ) = treasury.call{value: msg.value}("");
-            if (!ok) revert TreasuryRejectedEth();
-            emit ClaimFeePaid(msg.sender, treasury, msg.value);
-        }
-
+        // ---- EFFECTS: all internal state writes happen here, before any external mutation.
         unchecked {
             balanceOf[address(this)] -= tokensPerSlugg;
             balanceOf[msg.sender]    += tokensPerSlugg;
@@ -347,13 +344,23 @@ contract USlugg404 {
         sluggs[newSluggId] = Slugg({
             seed:           oldSeed,
             originalMinter: msg.sender,
-            mintedAtSwap:   seed.swapCount()
+            mintedAtSwap:   swapNo
         });
         ownerOf[newSluggId] = msg.sender;
         _inventory[msg.sender].push(newSluggId);
         emit SluggMinted(newSluggId, msg.sender, oldSeed);
         emit Transfer721(address(0), msg.sender, newSluggId);
         emit SluggUnclaimed(msg.sender, claimedId, newSluggId);
+
+        // ---- INTERACTIONS: external calls last. If either reverts, the entire
+        // tx unwinds and all state writes above are rolled back atomically.
+        claimedNft.burn(claimedId);
+
+        if (msg.value > 0) {
+            (bool ok, ) = treasury.call{value: msg.value}("");
+            if (!ok) revert TreasuryRejectedEth();
+            emit ClaimFeePaid(msg.sender, treasury, msg.value);
+        }
     }
 
     function _removeFromInventory(address holder, uint256 id) internal {

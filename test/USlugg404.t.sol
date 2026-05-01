@@ -52,6 +52,18 @@ contract USlugg404Test is Test {
         token.setUnclaimFee(0.0069 ether);
     }
 
+    /// @notice Constructor must reject treasury=0 — otherwise the entire
+    /// initial supply is assigned to address(0) and irrecoverable.
+    function test_constructor_rejects_zero_treasury() public {
+        vm.expectRevert(USlugg404.ZeroTreasury.selector);
+        new USlugg404(hook, payable(address(0)), MAX, TPS);
+    }
+
+    function test_constructor_rejects_zero_tokensPerSlugg() public {
+        vm.expectRevert(USlugg404.ZeroTokensPerSlugg.selector);
+        new USlugg404(hook, treasury, MAX, 0);
+    }
+
     /// @notice Treasury → Alice transfer of 5.000 USLUG mints 5 NFTs to Alice.
     function test_buy_mints_nfts() public {
         vm.prank(treasury);

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {IUSluggRenderer} from "./IUSluggRenderer.sol";
+import {IUSluggClaimed, IUSluggClaimedAdmin} from "./IUSluggClaimed.sol";
 
 /// @notice Standalone ERC-721 minted when a holder calls USlugg404.claim().
 ///
@@ -11,7 +12,7 @@ import {IUSluggRenderer} from "./IUSluggRenderer.sol";
 /// and trade like any other NFT collection.
 ///
 /// Minimal ERC-721 implementation inlined to avoid the OpenZeppelin dependency.
-contract USluggClaimed {
+contract USluggClaimed is IUSluggClaimed, IUSluggClaimedAdmin {
     string public constant name   = "uSlugg Claimed";
     string public constant symbol = "USLUG";
 
@@ -30,8 +31,8 @@ contract USluggClaimed {
     address public royaltyRecipient;
     uint96  public royaltyBps;
 
-    mapping(uint256 => Claimed)                       public claimed;
-    mapping(uint256 => address)                       public ownerOf;
+    mapping(uint256 => Claimed)                       public override claimed;
+    mapping(uint256 => address)                       public override ownerOf;
     mapping(address => uint256)                       public balanceOf;
     mapping(uint256 => address)                       public getApproved;
     mapping(address => mapping(address => bool))      public isApprovedForAll;
@@ -48,6 +49,7 @@ contract USluggClaimed {
     error NotAuthorized();
     error TokenDoesNotExist();
     error RoyaltyTooHigh();
+    error Uslugg404Zero();
 
     event RoyaltySet(address indexed recipient, uint96 bps);
 
@@ -57,20 +59,23 @@ contract USluggClaimed {
     }
 
     constructor(address _uslugg404, IUSluggRenderer _renderer) {
+        // Without a non-zero parent, every gated entry point (mint/burn/
+        // setRenderer/setRoyalty) becomes unreachable and the contract is bricked.
+        if (_uslugg404 == address(0)) revert Uslugg404Zero();
         uslugg404 = _uslugg404;
         renderer  = _renderer;
     }
 
     /// @notice Swap the renderer contract. Gated to USlugg404 so the parent's
     /// owner controls upgrades via USlugg404.setClaimedRenderer().
-    function setRenderer(IUSluggRenderer r) external onlyUslugg404 {
+    function setRenderer(IUSluggRenderer r) external override onlyUslugg404 {
         renderer = r;
     }
 
     /// @notice EIP-2981 royalty setter. Hard-capped at 10% (1000 bps) so the
     /// claimed NFTs remain marketplace-friendly (OpenSea / Blur honor 2981 up
     /// to ~10% by convention).
-    function setRoyalty(address recipient, uint96 bps) external onlyUslugg404 {
+    function setRoyalty(address recipient, uint96 bps) external override onlyUslugg404 {
         if (bps > 1000) revert RoyaltyTooHigh();
         royaltyRecipient = recipient;
         royaltyBps = bps;
@@ -86,7 +91,7 @@ contract USluggClaimed {
 
     /// @notice Mint a claimed NFT. Only callable by USlugg404 during claim().
     function mint(address to, bytes32 seed, uint256 origin404Id)
-        external onlyUslugg404 returns (uint256 id)
+        external override onlyUslugg404 returns (uint256 id)
     {
         if (to == address(0)) revert InvalidRecipient();
         id = nextId++;
@@ -101,7 +106,7 @@ contract USluggClaimed {
     }
 
     /// @notice Burn a claimed NFT. Only callable by USlugg404 during unclaim().
-    function burn(uint256 id) external onlyUslugg404 {
+    function burn(uint256 id) external override onlyUslugg404 {
         address o = ownerOf[id];
         if (o == address(0)) revert NotOwner();
         delete claimed[id];

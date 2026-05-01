@@ -25,6 +25,10 @@ contract USluggBeta {
 
     uint256 public totalSupply;
     address public admin;
+    /// @dev Pending admin (two-step handoff). Typo'd `transferAdmin` no longer
+    /// permanently bricks the contract — current admin retains control until a
+    /// reachable address calls `acceptAdmin`. Mirrors USluggHook ownership flow.
+    address public pendingAdmin;
     IUSluggRenderer public renderer;
 
     event Transfer(address indexed from, address indexed to, uint256 indexed id);
@@ -32,9 +36,12 @@ contract USluggBeta {
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
     event SluggMinted(uint256 indexed id, address indexed to, bytes32 key);
     event RendererSet(address indexed renderer);
+    event AdminTransferStarted(address indexed previousAdmin, address indexed newAdmin);
+    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
 
     error MaxSupply();
     error NotAdmin();
+    error NotPendingAdmin();
     error NotAuthorized();
     error InvalidRecipient();
     error WrongFrom();
@@ -53,9 +60,21 @@ contract USluggBeta {
         emit RendererSet(address(r));
     }
 
+    /// @notice Step 1: propose a new admin. Pass address(0) to cancel a
+    /// previously-proposed transfer.
     function transferAdmin(address newAdmin) external {
         if (msg.sender != admin) revert NotAdmin();
-        admin = newAdmin;
+        pendingAdmin = newAdmin;
+        emit AdminTransferStarted(admin, newAdmin);
+    }
+
+    /// @notice Step 2: pendingAdmin claims the role.
+    function acceptAdmin() external {
+        if (msg.sender != pendingAdmin) revert NotPendingAdmin();
+        address previous = admin;
+        admin = pendingAdmin;
+        delete pendingAdmin;
+        emit AdminTransferred(previous, admin);
     }
 
     // -------- mint --------

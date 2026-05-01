@@ -31,7 +31,8 @@ contract USluggMintHelper {
         if (count == 0 || count > MAX_PER_TX) revert BadCount();
         uint256 amount = count * tokensPerSlugg;
         if (token.balanceOf(address(this)) < amount) revert Empty();
-        token.transfer(msg.sender, amount);
+        // Log first, transfer last — CEI plus checked transfer.
         emit Minted(msg.sender, count);
+        require(token.transfer(msg.sender, amount), "mint transfer failed");
     }
 }

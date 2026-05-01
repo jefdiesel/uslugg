@@ -56,9 +56,12 @@ contract USluggFaucet {
             revert CooldownActive(last + cooldown);
         }
         if (token.balanceOf(address(this)) < dripAmount) revert FaucetEmpty();
+        // CEI: write state + log before the external transfer. Required for
+        // any token whose transfer can re-enter; defense-in-depth here since
+        // USlugg404._move never returns false but a future swap could.
         lastRequest[msg.sender] = block.timestamp;
-        token.transfer(msg.sender, dripAmount);
         emit Dripped(msg.sender, dripAmount);
+        require(token.transfer(msg.sender, dripAmount), "drip transfer failed");
     }
 
     /// @notice View — when can `who` request again? Returns 0 if never requested.
