@@ -37,8 +37,8 @@ contract DeployTestnet is Script {
             tokensPerSlugg
         );
         token.setRenderer(IUSluggRenderer(address(renderer)));
-        token.setClaimFee(0.0001 ether);   // testnet-cheap: $0.30
-        token.setUnclaimFee(0.0005 ether); // testnet-cheap: $1.50
+        token.setWrapFee(0.0001 ether);   // testnet-cheap: $0.30
+        token.setUnwrapFee(0.0005 ether); // testnet-cheap: $1.50
 
         USluggClaimed claimed = new USluggClaimed(address(token), IUSluggRenderer(address(renderer)));
         token.setClaimedNft(IUSluggClaimed(address(claimed)));

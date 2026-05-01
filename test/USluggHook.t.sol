@@ -264,6 +264,53 @@ contract USluggHookTest is Test {
         hook.lockPool(attackerKey);
     }
 
+    // -------- swapFiredThisTx (transient storage flag) --------
+
+    /// @notice After lockPool, an afterSwap on the locked pool must set the
+    /// transient `swapFiredThisTx()` flag. USlugg404._move reads this to gate
+    /// receive-side auto-mint, so it must reliably go true within the tx.
+    function test_swapFiredThisTx_set_after_locked_pool_afterSwap() public {
+        PoolKey memory ourKey = _keyWith(address(0x111), address(0x222));
+        hook.lockPool(ourKey);
+
+        // Pre-state: nothing fired yet — this tx hasn't called afterSwap.
+        assertEq(hook.swapFiredThisTx(), false, "fresh tx starts false");
+
+        _afterSwapWithKey(ourKey, true, -1_000, 1_000, -1_500);
+
+        // Within the SAME tx, the transient flag must read true.
+        assertEq(hook.swapFiredThisTx(), true, "locked-pool afterSwap sets flag");
+    }
+
+    /// @notice An afterSwap call on an attacker-controlled pool must NOT set
+    /// the flag. The early-return short-circuit happens before the tstore.
+    function test_swapFiredThisTx_not_set_for_attacker_pool() public {
+        PoolKey memory ourKey      = _keyWith(address(0x111), address(0x222));
+        PoolKey memory attackerKey = _keyWith(address(0xAAA), address(0xBBB));
+
+        hook.lockPool(ourKey);
+
+        // Attacker pool drives afterSwap — short-circuit return runs before
+        // any tstore, so the flag stays unset.
+        _afterSwapWithKey(attackerKey, true, -1_000, 1_000, -1_500);
+
+        assertEq(hook.swapFiredThisTx(), false, "attacker pool MUST NOT set the flag");
+    }
+
+    /// @notice EIP-1153 transient storage clears at end-of-tx. Forge runs each
+    /// test function as its own tx, so a flag set in one test must not leak
+    /// into another. This test should observe a clean false on entry — relying
+    /// on the harness ordering, no inheritance from test_swapFiredThisTx_set_*.
+    function test_swapFiredThisTx_clears_across_txs() public {
+        // Fresh test function = fresh tx. Without doing anything else, the
+        // transient slot must be zero.
+        assertEq(
+            hook.swapFiredThisTx(),
+            false,
+            "transient flag is per-tx, must start false in a new test"
+        );
+    }
+
     // -------- helpers --------
 
     function _key() internal pure returns (PoolKey memory) {

@@ -5,19 +5,35 @@ import {ISeedSource}      from "./ISeedSource.sol";
 import {IUSluggRenderer}  from "./IUSluggRenderer.sol";
 import {IUSluggClaimed, IUSluggClaimedAdmin} from "./IUSluggClaimed.sol";
 
+/// @notice Minimal sell/buy router surface used by callHook(). The real router
+/// (USluggSwap) implements this; we only need the two entry points here.
+interface IUSluggSwapRouter {
+    function sell(uint256 usluggAmount, uint256 minEthOut, uint256 deadline) external returns (uint256 ethOut);
+    function buy(uint256 usluggOut, uint256 maxEthIn, uint256 deadline) external payable returns (uint256 ethSpent);
+}
+
 /// @notice Hybrid ERC-20 + Slugg NFT, with ERC-721 visibility events so wallets
-/// and explorers auto-detect the NFTs without an explicit claim.
+/// and explorers auto-detect the NFTs without an explicit wrap.
 ///
 /// Holding 1.000 USLUG token = owning 1 Slugg NFT (joined at the hip). Selling
 /// burns your NFT; the buyer gets a freshly-minted one with a new seed (so a
 /// token unit cycling through 3 owners has been 3 different sluggs).
 ///
-/// You can OPTIONALLY `claim(id)` to lift a specific Slugg out into a
+/// You can OPTIONALLY `wrap(id)` to lift a specific Slugg out into a
 /// standalone USluggClaimed ERC-721 (separately tradeable on OpenSea, etc.).
-/// claim() charges a fee in ETH that goes to the treasury.
+/// wrap() charges a fee in ETH that goes to the treasury.
 ///
 /// Decimals: 3. Smallest unit = 0.001 USLUG (1 raw). Mint threshold = 1.000 USLUG (1e3 raw).
 /// People can hold fractional USLUG without minting an NFT — collectible above 1.0.
+///
+/// SEED-AWARE AUTO-MINT (the "404 magic"):
+///   The receive-side auto-mint in `_move` is gated on
+///   `seed.swapFiredThisTx()` — only USLUG that arrives via the locked-pool
+///   swap (path A: USluggSwap.buy) or callHook's round-trip (path C) gets
+///   matching sluggs minted. Direct ERC-20 transfers, faucet drips, airdrops,
+///   and aggregator routes that don't touch the locked pool deliver USLUG
+///   without sluggs — holders can call `callHook` later to materialize them
+///   with a fresh on-chain seed.
 contract USlugg404 {
     string  public constant name     = "uSlugg";
     string  public constant symbol   = "USLUG";
@@ -48,10 +64,16 @@ contract USlugg404 {
     /// Marking immutable saves the SLOAD on every onlyOwner check.
     address public immutable owner;
     address payable public treasury;
-    /// @dev Claim fee in ETH (wei). Sent to treasury when a holder calls claim().
-    uint256 public claimFeeWei;
-    /// @dev Unclaim fee in ETH (wei). Discourages tight round-trip wrapping.
-    uint256 public unclaimFeeWei;
+    /// @dev Wrap fee in ETH (wei). Sent to treasury when a holder calls wrap().
+    uint256 public wrapFeeWei;
+    /// @dev Unwrap fee in ETH (wei). Discourages tight round-trip wrapping.
+    uint256 public unwrapFeeWei;
+
+    /// @dev Locked-pool swap router used by callHook to round-trip USLUG and
+    /// roll a fresh seed. Set ONCE via setSwapRouter (one-shot, onlyOwner).
+    /// address(0) until set; callHook reverts in that state.
+    address public swapRouter;
+    bool internal _routerSet;
 
     ISeedSource public seed;
     IUSluggRenderer public renderer;
@@ -72,11 +94,23 @@ contract USlugg404 {
     event RendererSet(address indexed renderer);
     event ClaimedNftSet(address indexed claimedNft);
     event TreasurySet(address indexed treasury);
-    event ClaimFeeSet(uint256 feeWei);
-    event UnclaimFeeSet(uint256 feeWei);
-    event ClaimFeePaid(address indexed payer, address indexed treasury, uint256 amount);
-    event SluggClaimed(address indexed holder, uint256 indexed sluggId, uint256 indexed claimedId, uint256 fee);
-    event SluggUnclaimed(address indexed holder, uint256 indexed claimedId, uint256 indexed newSluggId);
+    event WrapFeeSet(uint256 feeWei);
+    event UnwrapFeeSet(uint256 feeWei);
+    event WrapFeePaid(address indexed payer, address indexed treasury, uint256 amount);
+    event SluggWrapped(address indexed holder, uint256 indexed sluggId, uint256 indexed claimedId, uint256 fee);
+    event SluggUnwrapped(address indexed holder, uint256 indexed claimedId, uint256 indexed newSluggId);
+    event SwapRouterSet(address indexed router);
+    /// @notice callHook completed. `usluggIn` was pulled from the caller, `ethRoundTrip`
+    /// is the ETH the sell leg produced (= the ETH ceiling spent on the buy leg before
+    /// refund), `usluggBack` was returned to the caller, and `count` sluggs were minted
+    /// with the post-second-swap seed.
+    event CallHookCompleted(
+        address indexed caller,
+        uint256 usluggIn,
+        uint256 ethRoundTrip,
+        uint256 usluggBack,
+        uint256 count
+    );
 
     // -------- errors --------
 
@@ -92,17 +126,31 @@ contract USlugg404 {
     error ClaimedNotConfigured();
     error TreasuryNotSet();
     error TransferDisabled();   // ERC-721 transfer not allowed; use ERC-20
-    error WrongClaimFee();
-    error WrongUnclaimFee();
+    error WrongWrapFee();
+    error WrongUnwrapFee();
     error TreasuryRejectedEth();
+    error RouterAlreadySet();
+    error RouterNotSet();
+    error ZeroAddress();
+    error ZeroCount();
+    error SlippageTooHigh();    // maxSlippageBps > 500 (5% hard cap)
+    error SlippageExceeded();   // round-trip returned less USLUG than threshold
+    error EthLegFailed();       // sell leg returned 0 ETH (or buy leg overshot; defense-in-depth)
+    error InsufficientBuffer(); // callHook caller didn't budget the worst-case slippage buffer
+    error EthRefundFailed();    // dust refund to caller after callHook failed
+
+    /// @dev Hard ceiling on `maxSlippageBps` for callHook. 500 = 5%. Caller-
+    /// supplied; UI defaults to 100 (1%) but we enforce the ceiling on-chain.
+    uint16 public constant MAX_SLIPPAGE_BPS = 500;
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
     }
 
-    /// @dev Inline reentrancy guard. Defense-in-depth on claim/unclaim; the
-    /// trust model (claimedNft set by onlyOwner) makes this belt-and-suspenders.
+    /// @dev Inline reentrancy guard. Defense-in-depth on wrap/unwrap/callHook;
+    /// callHook in particular re-enters through PoolManager's unlock callback
+    /// twice (sell, then buy) so the guard is load-bearing there.
     uint8 private _locked = 1;
     modifier nonReentrant() {
         if (_locked != 1) revert Reentrant();
@@ -120,7 +168,7 @@ contract USlugg404 {
         if (_tokensPerSlugg == 0) revert ZeroTokensPerSlugg();
         // Initial supply (maxSluggs * tokensPerSlugg) lands in _treasury — must
         // be a real address. setTreasury(0) afterwards is fine and explicitly
-        // disables the claim/unclaim fee path.
+        // disables the wrap/unwrap fee path.
         if (_treasury == address(0)) revert ZeroTreasury();
         owner          = msg.sender;
         seed           = _seed;
@@ -128,7 +176,11 @@ contract USlugg404 {
         maxSluggs      = _maxSluggs;
         tokensPerSlugg = _tokensPerSlugg;
         totalSupply    = _maxSluggs * _tokensPerSlugg;
-        skipSluggs[_treasury] = true;
+        skipSluggs[_treasury]    = true;
+        // The token itself holds USLUG in transit during wrap()/callHook(); it
+        // must never auto-mint sluggs to itself. Setting at construction is
+        // the safe place — the contract's own address cannot host an NFT id.
+        skipSluggs[address(this)] = true;
         balanceOf[_treasury]  = totalSupply;
         emit Transfer(address(0), _treasury, totalSupply);
     }
@@ -173,14 +225,35 @@ contract USlugg404 {
         emit TreasurySet(t);
     }
 
-    function setClaimFee(uint256 feeWei) external onlyOwner {
-        claimFeeWei = feeWei;
-        emit ClaimFeeSet(feeWei);
+    function setWrapFee(uint256 feeWei) external onlyOwner {
+        wrapFeeWei = feeWei;
+        emit WrapFeeSet(feeWei);
     }
 
-    function setUnclaimFee(uint256 feeWei) external onlyOwner {
-        unclaimFeeWei = feeWei;
-        emit UnclaimFeeSet(feeWei);
+    function setUnwrapFee(uint256 feeWei) external onlyOwner {
+        unwrapFeeWei = feeWei;
+        emit UnwrapFeeSet(feeWei);
+    }
+
+    /// @notice One-shot pin of the locked-pool swap router used by callHook.
+    /// After this returns, the token has approved `router` for max USLUG (so
+    /// `callHook` can sell without re-approving every call), and the router
+    /// is added to skipSluggs (it's transit, not a holder). One-shot to prevent
+    /// late hijack: if owner is later compromised, they can't swap routers
+    /// underneath users.
+    function setSwapRouter(address router) external onlyOwner {
+        if (_routerSet) revert RouterAlreadySet();
+        if (router == address(0)) revert ZeroAddress();
+        _routerSet = true;
+        swapRouter = router;
+        skipSluggs[router] = true;       // router is transit
+        // Set max approval once. allowance[address(this)][router] is stored
+        // directly; emit Approval so indexers (and the router's own
+        // transferFrom) see the standard ERC-20 wiring.
+        allowance[address(this)][router] = type(uint256).max;
+        emit Approval(address(this), router, type(uint256).max);
+        emit SkipSet(router, true);
+        emit SwapRouterSet(router);
     }
 
     // -------- ERC-20 --------
@@ -225,8 +298,18 @@ contract USlugg404 {
         uint256 toWholeAfter   = balanceOf[to]   / tokensPerSlugg;
 
         if (!skipSluggs[from] && fromWholeAfter < fromWholeBefore) {
+            // Lossy burn: if the holder's whole-balance dropped by `lose` but
+            // their inventory has fewer NFTs than `lose`, burn what they have
+            // and let the rest just be a balance decrement. This handles the
+            // post-redesign case where USLUG can be transferred WITHOUT a
+            // matching NFT mint (auto-mint is gated on swapFiredThisTx, so
+            // p2p / faucet / airdrop USLUG arrives without sluggs). Without
+            // this, those holders couldn't sell their USLUG — `_inventory.pop`
+            // on an empty array would underflow and brick transfers.
             uint256 lose = fromWholeBefore - fromWholeAfter;
-            for (uint256 i; i < lose; ++i) {
+            uint256 invLen = _inventory[from].length;
+            uint256 toBurn = lose < invLen ? lose : invLen;
+            for (uint256 i; i < toBurn; ++i) {
                 uint256 last = _inventory[from].length - 1;
                 uint256 id   = _inventory[from][last];
                 _inventory[from].pop();
@@ -237,7 +320,13 @@ contract USlugg404 {
             }
         }
 
-        if (!skipSluggs[to] && toWholeAfter > toWholeBefore) {
+        // Receive-side auto-mint is gated on swapFiredThisTx() — only
+        // USLUG that arrived via a locked-pool afterSwap (path A or path
+        // C round-trip) materializes sluggs. Other deliveries (direct
+        // transfer, faucet, airdrop, aggregator without our pool) just
+        // land as balance; the holder can call callHook() later to
+        // materialize sluggs with a fresh seed.
+        if (!skipSluggs[to] && toWholeAfter > toWholeBefore && seed.swapFiredThisTx()) {
             uint256 gain     = toWholeAfter - toWholeBefore;
             bytes32 hookSeed = seed.currentSeed();
             uint64  swapNo   = seed.swapCount();
@@ -254,6 +343,139 @@ contract USlugg404 {
 
         emit Transfer(from, to, amount);
     }
+
+    // -------- callHook: materialize sluggs from already-held USLUG --------
+
+    /// @notice Pull `count * tokensPerSlugg` USLUG from caller, round-trip it
+    /// through the locked pool (sell → buy), and mint `count` sluggs with the
+    /// fresh post-swap seed. The caller pays ~2x pool fees + slippage; the
+    /// real economic cost prevents cheap seed grinding.
+    ///
+    /// Slippage: caller-supplied bps; UI default is 100 (1%). On-chain hard
+    /// cap is 500 (5%) — anything higher reverts immediately.
+    ///
+    /// All-or-nothing: any leg failure (sell revert, buy revert, slippage
+    /// exceeded) reverts the entire tx, so the caller's USLUG is restored
+    /// atomically and no partial state escapes.
+    function callHook(uint256 count, uint256 maxSlippageBps) external nonReentrant {
+        if (count == 0) revert ZeroCount();
+        if (maxSlippageBps > MAX_SLIPPAGE_BPS) revert SlippageTooHigh();
+        address router = swapRouter;
+        if (router == address(0)) revert RouterNotSet();
+
+        uint256 amountIn = count * tokensPerSlugg;
+
+        // ---- Snapshot ETH balance at the very top so leftover dust from the
+        // exact-output buy refund (USluggSwap returns the unspent portion to
+        // its `p.sender`, which is this contract) can be forwarded to the
+        // caller at the end. Anything already held here pre-call is left
+        // untouched — only the post-buy delta gets refunded.
+        uint256 ethBefore = address(this).balance;
+
+        // ---- Slippage buffer precondition. Without this, a caller with
+        // exactly `(existingSluggs + count) * TPS` USLUG could survive the
+        // round-trip with `count` new sluggs but a balance that has eroded
+        // below `inventory.length * TPS`, permanently breaking the
+        // `inventory.length <= balance/TPS` invariant. Require the caller to
+        // budget the worst-case slippage buffer up front:
+        //   existing-sluggs-coverage + new-sluggs-coverage + maxSlippageBps buffer
+        uint256 ownedNow = _inventory[msg.sender].length;
+        uint256 required = (ownedNow + count) * tokensPerSlugg
+                         + (amountIn * maxSlippageBps) / 10_000;
+        if (balanceOf[msg.sender] < required) revert InsufficientBuffer();
+
+        // ---- Pull USLUG from caller via direct balance manipulation. We
+        // bypass _move because: (a) the caller might not have inventory NFTs
+        // that match this balance crossing (post-redesign, USLUG can exist
+        // without sluggs), so the lossy-burn path would fire — but we don't
+        // want to burn random user inventory; (b) address(this) is skipSluggs
+        // anyway. We only emit the standard ERC-20 Transfer event for indexers.
+        unchecked {
+            balanceOf[msg.sender] -= amountIn;
+            balanceOf[address(this)] += amountIn;
+        }
+        emit Transfer(msg.sender, address(this), amountIn);
+
+        // ---- Round-trip: sell → buy. Both legs trigger afterSwap on the
+        // locked pool, so currentSeed advances twice. We use ETH balance
+        // deltas (not absolutes) so any pre-existing dust on this contract
+        // can never be swept into the round-trip.
+
+        // Sell leg. minEthOut=1: we don't enforce per-leg slippage here
+        // (the round-trip slippage check at the end is the user's protection).
+        // The router pulls USLUG via transferFrom against the max allowance
+        // we set in setSwapRouter.
+        uint256 ethOut = IUSluggSwapRouter(router).sell(amountIn, 1, block.timestamp);
+        uint256 ethGot;
+        unchecked { ethGot = address(this).balance - ethBefore; }
+        // Sanity check: ethGot must be > 0 to fund the buy leg. ethOut from
+        // the router should equal ethGot, but we use the delta as the source
+        // of truth (defends against any accounting drift inside the router).
+        if (ethGot == 0 || ethOut == 0) revert EthLegFailed();
+
+        // Buy leg: exact-output for `expected` USLUG, max-input ethGot. Pool
+        // fills at the spot price; if ethGot is insufficient, this reverts
+        // (MaxInputExceeded) and unwinds the whole tx. The exact-output
+        // semantics also automatically enforce the round-trip slippage:
+        // we receive exactly `expected` USLUG or the swap reverts.
+        uint256 expected = (amountIn * (10_000 - maxSlippageBps)) / 10_000;
+
+        uint256 usluggBefore = balanceOf[address(this)];
+        IUSluggSwapRouter(router).buy{value: ethGot}(expected, ethGot, block.timestamp);
+        uint256 usluggBack;
+        unchecked { usluggBack = balanceOf[address(this)] - usluggBefore; }
+
+        // Belt-and-suspenders slippage check. Exact-output buy() means
+        // usluggBack should equal `expected` exactly; we check >= in case any
+        // rounding inside the router ever returns slightly more (a router
+        // upgrade quirk shouldn't break us).
+        if (usluggBack < expected) revert SlippageExceeded();
+
+        // ---- Return the round-tripped USLUG to the caller via direct
+        // balance manipulation. Same reasoning as the pull above: avoid
+        // _move's auto-mint because the caller's whole-balance crossing
+        // here would fire the receive branch with stale/unwanted state.
+        // We mint sluggs ourselves below using the post-second-swap seed.
+        unchecked {
+            balanceOf[address(this)] -= usluggBack;
+            balanceOf[msg.sender]    += usluggBack;
+        }
+        emit Transfer(address(this), msg.sender, usluggBack);
+
+        // ---- Mint `count` sluggs to caller with the post-second-swap seed.
+        // We read currentSeed AFTER both swaps so it's maximally entropic.
+        bytes32 hookSeed = seed.currentSeed();
+        uint64  swapNo   = seed.swapCount();
+        for (uint256 i; i < count; ++i) {
+            uint256 id = nextSluggId++;
+            bytes32 s  = keccak256(abi.encode(hookSeed, id, msg.sender));
+            sluggs[id]  = Slugg({ seed: s, originalMinter: msg.sender, mintedAtSwap: swapNo });
+            ownerOf[id] = msg.sender;
+            _inventory[msg.sender].push(id);
+            emit SluggMinted(id, msg.sender, s);
+            emit Transfer721(address(0), msg.sender, id);
+        }
+
+        // ---- Forward any ETH dust the buy leg refunded (USluggSwap.buy is
+        // exact-output and refunds the unspent portion of `ethGot` to its
+        // p.sender, which is this contract). Pre-existing balance held by the
+        // contract before this call is preserved by anchoring on `ethBefore`.
+        uint256 leftover;
+        unchecked { leftover = address(this).balance - ethBefore; }
+        if (leftover > 0) {
+            (bool ok, ) = msg.sender.call{value: leftover}("");
+            if (!ok) revert EthRefundFailed();
+        }
+
+        emit CallHookCompleted(msg.sender, amountIn, ethGot, usluggBack, count);
+    }
+
+    /// @notice ETH receiver for callHook's sell leg (router refunds ETH back
+    /// to msg.sender of sell, which is this contract). Permissive — any
+    /// non-router sender can also send ETH, but `callHook` only spends ETH
+    /// via the cached delta `ethGot = balanceAfter - balanceBefore`, so dust
+    /// from third parties cannot be swept into a round-trip.
+    receive() external payable {}
 
     // -------- views --------
 
@@ -277,7 +499,7 @@ contract USlugg404 {
     // -------- ERC-721 transfer surface (intentionally disabled) --------
     // The NFT and the underlying ERC-20 are joined at the hip. To trade a
     // specific Slugg, either move the whole USLUG token via ERC-20 functions,
-    // or claim() it into a standalone USluggClaimed ERC-721.
+    // or wrap() it into a standalone USluggClaimed ERC-721.
 
     function getApproved(uint256) external pure returns (address) { return address(0); }
     function isApprovedForAll(address, address) external pure returns (bool) { return false; }
@@ -287,13 +509,17 @@ contract USlugg404 {
     function safeTransferFrom(address, address, uint256) external pure { revert TransferDisabled(); }
     function safeTransferFrom(address, address, uint256, bytes calldata) external pure { revert TransferDisabled(); }
 
-    // -------- claim / unclaim (standalone ERC-721 wrapping with treasury fee) --------
+    // -------- wrap / unwrap (standalone ERC-721 wrapping with treasury fee) --------
 
-    function claim(uint256 id) external payable nonReentrant returns (uint256 claimedId) {
+    /// @notice Wrap a Slugg out of the 404 surface and into the standalone
+    /// USluggClaimed ERC-721. Burns the in-404 slugg, locks 1 USLUG inside
+    /// this contract, and mints a fresh USluggClaimed token to the caller.
+    /// Pays `wrapFeeWei` ETH to treasury.
+    function wrap(uint256 id) external payable nonReentrant returns (uint256 claimedId) {
         if (address(claimedNft) == address(0)) revert ClaimedNotConfigured();
         if (ownerOf[id] != msg.sender) revert NotSluggHolder();
-        if (treasury == address(0) && claimFeeWei > 0) revert TreasuryNotSet();
-        if (msg.value != claimFeeWei) revert WrongClaimFee();
+        if (treasury == address(0) && wrapFeeWei > 0) revert TreasuryNotSet();
+        if (msg.value != wrapFeeWei) revert WrongWrapFee();
         if (balanceOf[msg.sender] < tokensPerSlugg) revert InsufficientBalance();
 
         Slugg memory c = sluggs[id];
@@ -316,18 +542,21 @@ contract USlugg404 {
         if (msg.value > 0) {
             (bool ok, ) = treasury.call{value: msg.value}("");
             if (!ok) revert TreasuryRejectedEth();
-            emit ClaimFeePaid(msg.sender, treasury, msg.value);
+            emit WrapFeePaid(msg.sender, treasury, msg.value);
         }
 
         claimedId = claimedNft.mint(msg.sender, c.seed, id);
-        emit SluggClaimed(msg.sender, id, claimedId, msg.value);
+        emit SluggWrapped(msg.sender, id, claimedId, msg.value);
     }
 
-    function unclaim(uint256 claimedId) external payable nonReentrant returns (uint256 newSluggId) {
+    /// @notice Inverse of wrap(): burn a USluggClaimed token, return 1 USLUG
+    /// to the caller, and re-mint a 404 slugg with the same seed (preserves
+    /// the wrapped art identity).
+    function unwrap(uint256 claimedId) external payable nonReentrant returns (uint256 newSluggId) {
         if (address(claimedNft) == address(0)) revert ClaimedNotConfigured();
         if (claimedNft.ownerOf(claimedId) != msg.sender) revert NotClaimedHolder();
-        if (treasury == address(0) && unclaimFeeWei > 0) revert TreasuryNotSet();
-        if (msg.value != unclaimFeeWei) revert WrongUnclaimFee();
+        if (treasury == address(0) && unwrapFeeWei > 0) revert TreasuryNotSet();
+        if (msg.value != unwrapFeeWei) revert WrongUnwrapFee();
 
         // Reads (staticcalls). Cached before effects so the CEI ordering below is clean.
         (bytes32 oldSeed,,) = claimedNft.claimed(claimedId);
@@ -350,7 +579,7 @@ contract USlugg404 {
         _inventory[msg.sender].push(newSluggId);
         emit SluggMinted(newSluggId, msg.sender, oldSeed);
         emit Transfer721(address(0), msg.sender, newSluggId);
-        emit SluggUnclaimed(msg.sender, claimedId, newSluggId);
+        emit SluggUnwrapped(msg.sender, claimedId, newSluggId);
 
         // ---- INTERACTIONS: external calls last. If either reverts, the entire
         // tx unwinds and all state writes above are rolled back atomically.
@@ -359,7 +588,7 @@ contract USlugg404 {
         if (msg.value > 0) {
             (bool ok, ) = treasury.call{value: msg.value}("");
             if (!ok) revert TreasuryRejectedEth();
-            emit ClaimFeePaid(msg.sender, treasury, msg.value);
+            emit WrapFeePaid(msg.sender, treasury, msg.value);
         }
     }
 

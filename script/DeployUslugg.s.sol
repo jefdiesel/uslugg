@@ -13,6 +13,7 @@ import {USlugg404}        from "../src/USlugg404.sol";
 import {USluggClaimed}    from "../src/USluggClaimed.sol";
 import {USluggRenderer}   from "../src/USluggRenderer.sol";
 import {USluggRuntime}    from "../src/USluggRuntime.sol";
+import {USluggSwap, IERC20Min, IWETH9} from "../src/USluggSwap.sol";
 import {IUSluggRenderer}  from "../src/IUSluggRenderer.sol";
 import {IUSluggClaimed}   from "../src/IUSluggClaimed.sol";
 
@@ -31,8 +32,8 @@ import {IUSluggClaimed}   from "../src/IUSluggClaimed.sol";
 ///   TOKENS_PER_SLUGG — wei per Slugg (default 1e3 = 1.000 USLUG given decimals=3)
 ///   HOOK_OWNER       — final owner of USluggHook. REQUIRED on mainnet (multisig).
 ///                      If unset on chainid=1, deploy reverts.
-///   CLAIM_FEE_WEI    — claim() ETH fee (default 0.001111 ether)
-///   UNCLAIM_FEE_WEI  — unclaim() ETH fee (default 0.0069 ether)
+///   WRAP_FEE_WEI     — wrap() ETH fee (default 0.001111 ether)
+///   UNWRAP_FEE_WEI   — unwrap() ETH fee (default 0.0069 ether)
 contract DeployUslugg is Script {
     address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
@@ -44,7 +45,9 @@ contract DeployUslugg is Script {
         address treasury  = _envAddrOr("TREASURY", deployer);
         address poolMgr   = _envAddrOr("POOL_MANAGER", _defaultPoolManager(block.chainid));
         address hookOwner = _envAddrOr("HOOK_OWNER", deployer);
+        address weth      = _defaultWeth(block.chainid);
         require(poolMgr != address(0), "POOL_MANAGER not set and no default for chain");
+        require(weth != address(0), "WETH not set and no default for chain");
         require(
             block.chainid != 1 || hookOwner != deployer,
             "HOOK_OWNER must be set (and != deployer) on mainnet"
@@ -52,14 +55,15 @@ contract DeployUslugg is Script {
 
         uint256 maxSluggs      = _envUintOr("MAX_SLUGGS",      10_000);
         uint256 tokensPerSlugg = _envUintOr("TOKENS_PER_SLUGG", 1e3);  // 1.000 USLUG at decimals=3
-        uint256 claimFeeWei    = _envUintOr("CLAIM_FEE_WEI",   0.001111 ether);
-        uint256 unclaimFeeWei  = _envUintOr("UNCLAIM_FEE_WEI", 0.0069 ether);
+        uint256 wrapFeeWei     = _envUintOr("WRAP_FEE_WEI",   0.001111 ether);
+        uint256 unwrapFeeWei   = _envUintOr("UNWRAP_FEE_WEI", 0.0069 ether);
 
         console2.log("== uSlugg deploy ==");
         console2.log("chainId:           ", block.chainid);
         console2.log("deployer/treasury: ", deployer);
         console2.log("treasury:          ", treasury);
         console2.log("poolManager:       ", poolMgr);
+        console2.log("weth:              ", weth);
         console2.log("hookOwner (final): ", hookOwner);
         console2.log("maxSluggs:         ", maxSluggs);
         console2.log("tokensPerSlugg:    ", tokensPerSlugg);
@@ -84,18 +88,12 @@ contract DeployUslugg is Script {
         USlugg404 token = new USlugg404(hook, payable(treasury), maxSluggs, tokensPerSlugg);
 
         // Address ordering: USLUG must be < WETH so it's token0 in the USLUG/WETH pool.
-        if (block.chainid == 1) {
-            require(address(token) < 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2,
-                "USLUG >= WETH (mainnet) - re-roll deployer nonce");
-        } else if (block.chainid == 11155111) {
-            require(address(token) < 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14,
-                "USLUG >= WETH (Sepolia) - re-roll deployer nonce");
-        }
+        require(address(token) < weth, "USLUG >= WETH - re-roll deployer nonce");
 
         token.setRenderer(IUSluggRenderer(address(renderer)));
         token.setSkip(poolMgr, true);  // PoolManager holds liquidity, exempt from minting NFTs
-        token.setClaimFee(claimFeeWei);
-        token.setUnclaimFee(unclaimFeeWei);
+        token.setWrapFee(wrapFeeWei);
+        token.setUnwrapFee(unwrapFeeWei);
 
         USluggClaimed claimedNft = new USluggClaimed(address(token), IUSluggRenderer(address(renderer)));
         token.setClaimedNft(IUSluggClaimed(address(claimedNft)));
@@ -105,21 +103,31 @@ contract DeployUslugg is Script {
         // this hook, swap a wei into it, and arbitrarily mutate currentSeed —
         // breaking the seed-rarity assumption the art relies on. lockPool is
         // one-shot and onlyOwner; we have to call it while still owner.
-        address weth = _defaultWeth(block.chainid);
-        if (weth != address(0)) {
-            PoolKey memory poolKey = PoolKey({
-                currency0:   Currency.wrap(address(token)),
-                currency1:   Currency.wrap(weth),
-                fee:         3000,
-                tickSpacing: 60,
-                hooks:       IHooks(address(hook))
-            });
-            hook.lockPool(poolKey);
-            console2.log("Hook locked to pool key (USLUG/WETH 0.3%)");
-        } else {
-            console2.log("WARNING: no WETH default for this chain - hook NOT locked.");
-            console2.log("  Call hook.lockPool(key) manually before handing ownership off.");
-        }
+        PoolKey memory poolKey = PoolKey({
+            currency0:   Currency.wrap(address(token)),
+            currency1:   Currency.wrap(weth),
+            fee:         3000,
+            tickSpacing: 60,
+            hooks:       IHooks(address(hook))
+        });
+        hook.lockPool(poolKey);
+        console2.log("Hook locked to pool key (USLUG/WETH 0.3%)");
+
+        // Deploy the swap router with the canonical PoolKey, then wire it
+        // into the token via the one-shot setSwapRouter. This needs to happen
+        // before ownership handoff (setSwapRouter is onlyOwner, one-shot —
+        // the multisig should never need to call it). After this returns:
+        //   - token approves swap for max USLUG (allowance set + Approval emitted)
+        //   - skipSluggs[swap] = true (router is transit, not a holder)
+        //   - swapRouter is permanently pinned
+        USluggSwap swap = new USluggSwap(
+            IPoolManager(poolMgr),
+            IWETH9(weth),
+            IERC20Min(address(token)),
+            poolKey
+        );
+        token.setSwapRouter(address(swap));
+        console2.log("Swap router wired (setSwapRouter), allowance=type(uint256).max");
 
         // Propose hook ownership handoff (no-op if HOOK_OWNER unset / == deployer).
         // Two-step: HOOK_OWNER must call acceptOwnership() afterwards to finalize.
@@ -139,13 +147,14 @@ contract DeployUslugg is Script {
         console2.log("USluggHook:     ", address(hook));
         console2.log("USlugg404:      ", address(token));
         console2.log("USluggClaimed:  ", address(claimedNft));
+        console2.log("USluggSwap:     ", address(swap));
         console2.log("");
         console2.log("Treasury holds", token.totalSupply(), "raw units of USLUG");
         console2.log("                = ", token.totalSupply() / tokensPerSlugg, "whole sluggs (NFTs)");
         console2.log("");
         console2.log("== Next steps (manual via Uniswap UI or follow-up script) ==");
         console2.log("1. Initialize v4 pool: USLUG / WETH, 0.3% fee, hook=", address(hook));
-        console2.log("2. Add launch LP via SeedLaunchLPMainnet (or SeedLaunchLP for testnet)");
+        console2.log("2. Add launch LP via SeedLaunchLPMainnet (or SeedLaunchLPSepolia for testnet)");
         console2.log("3. Update site SWAP_CONTRACT, ROUTER, etc. to mainnet addresses");
     }
 

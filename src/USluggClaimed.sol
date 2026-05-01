@@ -8,7 +8,7 @@ interface IERC721Receiver {
     function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external returns (bytes4);
 }
 
-/// @notice Standalone ERC-721 minted when a holder calls USlugg404.claim().
+/// @notice Standalone ERC-721 minted when a holder calls USlugg404.wrap().
 ///
 /// The reason this contract exists separately from the 404 hybrid: NFT marketplaces
 /// (OpenSea, Blur, etc.) don't index 404 NFTs because they don't emit canonical
@@ -93,7 +93,7 @@ contract USluggClaimed is IUSluggClaimed, IUSluggClaimedAdmin {
         return (royaltyRecipient, salePrice * royaltyBps / 10_000);
     }
 
-    /// @notice Mint a claimed NFT. Only callable by USlugg404 during claim().
+    /// @notice Mint a claimed NFT. Only callable by USlugg404 during wrap().
     function mint(address to, bytes32 seed, uint256 origin404Id)
         external override onlyUslugg404 returns (uint256 id)
     {
@@ -109,7 +109,7 @@ contract USluggClaimed is IUSluggClaimed, IUSluggClaimedAdmin {
         emit Transfer(address(0), to, id);
     }
 
-    /// @notice Burn a claimed NFT. Only callable by USlugg404 during unclaim().
+    /// @notice Burn a claimed NFT. Only callable by USlugg404 during unwrap().
     function burn(uint256 id) external override onlyUslugg404 {
         address o = ownerOf[id];
         if (o == address(0)) revert NotOwner();

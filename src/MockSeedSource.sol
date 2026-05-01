@@ -20,4 +20,11 @@ contract MockSeedSource is ISeedSource {
         unchecked { swapCount++; }
         currentSeed = keccak256(abi.encode(currentSeed, swapCount, block.prevrandao, block.timestamp, msg.sender));
     }
+
+    /// @notice Testnet permissive: always returns true so USlugg404._move
+    /// auto-mints on every transfer. Mainnet's USluggHook backs this with
+    /// EIP-1153 transient storage to gate on the locked pool's afterSwap.
+    function swapFiredThisTx() external pure override returns (bool) {
+        return true;
+    }
 }

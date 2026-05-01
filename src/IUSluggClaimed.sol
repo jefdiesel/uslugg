@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {IUSluggRenderer} from "./IUSluggRenderer.sol";
 
-/// @notice Mint/burn/lookup surface that USlugg404 calls during claim/unclaim.
+/// @notice Mint/burn/lookup surface that USlugg404 calls during wrap/unwrap.
 interface IUSluggClaimed {
     function mint(address to, bytes32 seed, uint256 origin404Id) external returns (uint256);
     function burn(uint256 id) external;

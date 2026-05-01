@@ -56,8 +56,9 @@ contract DeployTestnetV4 is Script {
         );
         require(address(token) < weth, "USLUG must be < WETH (re-roll deployer nonce)");
         token.setRenderer(IUSluggRenderer(address(renderer)));
-        token.setClaimFee(0.0001 ether);
-        token.setUnclaimFee(0.0005 ether);
+        token.setSkip(poolMgr, true);  // PoolManager holds liquidity, exempt from minting NFTs
+        token.setWrapFee(0.0001 ether);
+        token.setUnwrapFee(0.0005 ether);
 
         USluggClaimed claimed = new USluggClaimed(address(token), IUSluggRenderer(address(renderer)));
         token.setClaimedNft(IUSluggClaimed(address(claimed)));
@@ -71,7 +72,12 @@ contract DeployTestnetV4 is Script {
             hooks: IHooks(address(hook))
         });
 
-        // 5. Init pool at price = 1 USLUG / 0.0001 ETH  (testnet starting price)
+        // 5. Lock the hook to this pool key BEFORE initializing the pool. Lock
+        // is one-shot and onlyOwner — pinning prevents anyone else from
+        // creating their own pool with this hook and grinding the seed.
+        hook.lockPool(key);
+
+        // 6. Init pool at price = 1 USLUG / 0.0001 ETH  (testnet starting price)
         // sqrtPriceX96 = sqrt(1/(0.0001 * 1e15)) << 96   ← USLUG has 3 decimals (1e3 raw = 1.000), WETH has 18.
         // For 1 USLUG = 0.0001 WETH:
         //   ratio_token1_per_token0 = 0.0001e18 / 1e3 = 1e11
@@ -82,9 +88,11 @@ contract DeployTestnetV4 is Script {
         // to set effective price via tick range.
         IPoolManager(poolMgr).initialize(key, TickMath.getSqrtPriceAtTick(0));
 
-        // 6. Swap router (so the page can use buy()/sell() instead of UniversalRouter)
+        // 7. Swap router (so the page can use buy()/sell() instead of UniversalRouter).
+        // setSwapRouter wires the allowance + skipSluggs in one shot — the
+        // standalone setSkip call previously here is now redundant.
         USluggSwap swap = new USluggSwap(IPoolManager(poolMgr), IWETH9(weth), IERC20Min(address(token)), key);
-        token.setSkip(address(swap), true);  // swap router doesn't auto-mint NFTs to itself
+        token.setSwapRouter(address(swap));
 
         vm.stopBroadcast();
 
