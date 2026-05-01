@@ -92,18 +92,35 @@
     </div>
   </details>
 
-  <div class="bar" style="margin-top:14px; flex-wrap:wrap; display:flex; gap:8px; align-items:center;">
+  <div class="bar" style="margin-top:14px; display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
     <button id="btn-connect">Connect wallet</button>
-    <span class="info" style="flex:1; min-width:200px;">
-      <span id="wallet-state">not connected</span>
-      &nbsp;·&nbsp; you: <b id="usluk-balance">—</b> · supply: <b id="total">—</b>/10000
+    <span class="info" style="flex:1; min-width:160px;">
+      <span id="wallet-state">not connected</span><br>
+      you: <b id="usluk-balance">—</b> · supply: <b id="total">—</b>/10000
     </span>
-    <div style="display:flex; gap:6px; align-items:center;">
-      <input id="mint-count" type="number" min="1" max="100" value="1" style="background:#000;color:var(--fg);border:1px solid var(--border);padding:8px 12px;font:inherit;border-radius:4px;width:64px;">
-      <button id="btn-mint" disabled>BUY</button>
-      <button id="btn-sell" disabled style="background:var(--err);color:#fff;">SELL</button>
+    <div class="status" id="status" style="flex-basis:100%;"></div>
+  </div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+    <!-- BUY action -->
+    <div style="padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--card);">
+      <div style="font-size:10px; letter-spacing:2px; color:var(--accent); margin-bottom:6px;">▸ BUY (V4 SWAP)</div>
+      <div style="font-size:11px; color:var(--muted); margin-bottom:10px;">Each whole USLUG buys 1 slugg with a fresh hook-rolled seed.</div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <input id="buy-count" type="number" min="1" max="100" value="1" style="background:#000;color:var(--fg);border:1px solid var(--border);padding:8px 12px;font:inherit;border-radius:4px;width:80px;">
+        <button id="btn-mint" disabled style="flex:1;">BUY</button>
+      </div>
     </div>
-    <div class="status" id="status" style="flex-basis:100%; margin-top:4px;"></div>
+
+    <!-- SELL action -->
+    <div style="padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--card);">
+      <div style="font-size:10px; letter-spacing:2px; color:var(--err); margin-bottom:6px;">▸ SELL (LIFO)</div>
+      <div style="font-size:11px; color:var(--muted); margin-bottom:10px;">Burns last-N sluggs in your inventory (max <b id="sell-max">—</b>). Want a specific id? CLAIM it.</div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <input id="sell-count" type="number" min="1" max="100" value="1" style="background:#000;color:var(--fg);border:1px solid var(--border);padding:8px 12px;font:inherit;border-radius:4px;width:80px;">
+        <button id="btn-sell" disabled style="background:var(--err);color:#fff;flex:1;">SELL</button>
+      </div>
+    </div>
   </div>
 
 
@@ -414,7 +431,7 @@ async function connect() {
 // ---------- FAUCET ----------
 async function buySluggs() {
   if (!walletAddr) { setStatus("connect first", "err"); return; }
-  const count = Math.max(1, Math.min(100, parseInt($("mint-count").value, 10) || 1));
+  const count = Math.max(1, Math.min(100, parseInt($("buy-count").value, 10) || 1));
   setStatus(`buying ${count} slugg${count > 1 ? "s" : ""} via v4 swap…`, "pending");
   $("btn-mint").disabled = true;
   try {
@@ -539,6 +556,10 @@ async function refreshBalance() {
     const r = await ethCall(TOKEN, "0x" + SEL_BALANCEOF + encAddr(walletAddr));
     const bal = decUint(r);
     $("usluk-balance").textContent = fmt(bal);
+    // Sell max = number of whole sluggs the user holds
+    const wholes = Number(bal / 1000n);
+    if ($("sell-max")) $("sell-max").textContent = wholes;
+    if ($("sell-count")) $("sell-count").max = wholes;
   } catch { $("usluk-balance").textContent = "?"; }
 }
 
@@ -744,11 +765,15 @@ function closeModal() {
   $("modal-frame").innerHTML = "";
 }
 // Open the sell-confirm dialog. Actual sell only fires when user checks the box + confirms.
+// Sell N sluggs (where N = the SELL count input). Burns the last N in inventory.
+let _sellTargetIds = [];
+
 async function sellSlugg() {
+  const sellCount = Math.max(1, Math.min(100, parseInt($("sell-count").value, 10) || 1));
   const check = $("sell-confirm-check");
   const sellBtn = $("sell-confirm-btn");
   const protectBtn = $("sell-confirm-protect");
-  sellBtn.textContent = "SELL FOR ETH";
+  sellBtn.textContent = `SELL ${sellCount} FOR ETH`;
   check.checked = false;
   sellBtn.disabled = true;
   check.onchange = () => { sellBtn.disabled = !check.checked; };
@@ -756,18 +781,17 @@ async function sellSlugg() {
     sellBtn.disabled = true;
     sellBtn.textContent = "AWAITING WALLET…";
     try {
-      await _doSellLIFO();
+      await _doSellLIFO(sellCount);
       cancelSell();
     } catch (e) {
       sellBtn.disabled = false;
-      sellBtn.textContent = "SELL FOR ETH";
+      sellBtn.textContent = `SELL ${sellCount} FOR ETH`;
       setStatus("sell failed: " + (e.data?.message || e.message || String(e)).slice(0,80), "err");
     }
   };
-  // Look up the actual LIFO target — it's the LAST entry in inventoryOf
   $("sell-confirm-target").textContent = "looking up…";
   $("sell-confirm-num").textContent = "—";
-  protectBtn.textContent = "PROTECT #—";
+  protectBtn.textContent = "PROTECT —";
   protectBtn.disabled = true;
   try {
     const r = await ethCall(TOKEN, "0x" + SEL_INVENTORY_OF + encAddr(walletAddr));
@@ -776,54 +800,67 @@ async function sellSlugg() {
       $("sell-confirm-target").textContent = "(none — your inventory is empty)";
       $("sell-confirm-preview").innerHTML = '';
       sellBtn.disabled = true;
-    } else {
-      const targetId = ids[ids.length - 1];
-      $("sell-confirm-target").innerHTML = `slugg <b>#${targetId}</b>`;
-      $("sell-confirm-num").textContent = targetId;
-      protectBtn.textContent = `PROTECT #${targetId}`;
-      protectBtn.disabled = false;
-      protectBtn.onclick = async () => {
-        protectBtn.disabled = true;
-        protectBtn.textContent = "CLAIMING…";
-        cancelSell();
-        await claim(targetId);
-      };
+      return;
+    }
+    if (sellCount > ids.length) {
+      $("sell-confirm-target").innerHTML = `<span style="color:var(--err);">requested ${sellCount} but you only have ${ids.length}</span>`;
+      sellBtn.disabled = true;
+      return;
+    }
+    // Take the last `sellCount` ids in inventory order — these will burn
+    _sellTargetIds = ids.slice(-sellCount);
+    const targets = _sellTargetIds;
+    const lastId = targets[targets.length - 1]; // the one we preview
 
-      // Populate animation preview
-      const previewBox = $("sell-confirm-preview");
-      previewBox.innerHTML = '<div class="skeleton" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#333;font-size:8px;">…</div>';
-      try {
-        const uriR = await ethCall(TOKEN, "0x" + SEL_TOKENURI + encU256(targetId));
-        const meta = parseTokenURI(decodeString(uriR));
-        if (meta.animation_url) {
-          previewBox.innerHTML = "";
-          const ifr = document.createElement("iframe");
-          ifr.setAttribute("sandbox", "allow-scripts");
-          ifr.style.cssText = "width:100%;height:100%;border:0;display:block;pointer-events:none;";
-          ifr.srcdoc = meta.animation_url.slice("data:text/html;utf8,".length);
-          previewBox.appendChild(ifr);
-        }
-      } catch { /* ignore */ }
-      // Quote the ETH amount the sell will return — simulate sell() if allowance is set
-      $("sell-confirm-eth").textContent = "quoting…";
-      try {
-        const allowR = await ethCall(TOKEN, "0xdd62ed3e" + encAddr(walletAddr) + encAddr(SWAP));
-        if (decUint(allowR) >= 1000n) {
-          // Allowance set — simulate the actual sell call
-          const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800);
-          const data = "0xd3c9727c" + encU256(1000) + encU256(0) + deadline.toString(16).padStart(64, "0");
-          const r = await rpc("eth_call", [{ to: SWAP, data, from: walletAddr }, "latest"]);
-          const ethOut = decUint(r);
-          const ethDisplay = ethOut > 1_000_000_000_000_000n
-            ? `${(Number(ethOut) / 1e18).toFixed(6)} ETH`
-            : `${ethOut} wei`;
-          $("sell-confirm-eth").innerHTML = `${ethDisplay}<div style="font-size:9px; color:var(--muted); margin-top:3px;">testnet pool started at tick 0</div>`;
-        } else {
-          $("sell-confirm-eth").innerHTML = `<span style="font-size:11px; color:var(--warn);">need approve first<br>(2 txs total)</span>`;
-        }
-      } catch (e) {
-        $("sell-confirm-eth").innerHTML = `<span style="font-size:11px; color:var(--err);">quote failed</span>`;
+    // Show all targets in the dialog
+    $("sell-confirm-target").innerHTML = targets.length === 1
+      ? `slugg <b>#${targets[0]}</b>`
+      : `${targets.length} sluggs: ${targets.map(t => `<b>#${t}</b>`).join(", ")}`;
+    $("sell-confirm-num").textContent = targets.length === 1 ? targets[0] : `${targets.length} sluggs`;
+    protectBtn.textContent = `PROTECT FIRST (#${lastId})`;
+    protectBtn.disabled = false;
+    protectBtn.onclick = async () => {
+      protectBtn.disabled = true;
+      protectBtn.textContent = "CLAIMING…";
+      cancelSell();
+      await claim(lastId);
+    };
+
+    // Animation preview of the LAST inventory entry (the most-imminent burn)
+    const previewBox = $("sell-confirm-preview");
+    previewBox.innerHTML = '<div class="skeleton" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#333;font-size:8px;">…</div>';
+    try {
+      const uriR = await ethCall(TOKEN, "0x" + SEL_TOKENURI + encU256(lastId));
+      const meta = parseTokenURI(decodeString(uriR));
+      if (meta.animation_url) {
+        previewBox.innerHTML = "";
+        const ifr = document.createElement("iframe");
+        ifr.setAttribute("sandbox", "allow-scripts");
+        ifr.style.cssText = "width:100%;height:100%;border:0;display:block;pointer-events:none;";
+        ifr.srcdoc = meta.animation_url.slice("data:text/html;utf8,".length);
+        previewBox.appendChild(ifr);
       }
+    } catch { /* ignore */ }
+
+    // Quote the ETH amount the sell will return
+    const amount = BigInt(sellCount) * 1000n;
+    $("sell-confirm-eth").textContent = "quoting…";
+    try {
+      const allowR = await ethCall(TOKEN, "0xdd62ed3e" + encAddr(walletAddr) + encAddr(SWAP));
+      if (decUint(allowR) >= amount) {
+        const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800);
+        const data = "0xd3c9727c" + encU256(Number(amount)) + encU256(0) + deadline.toString(16).padStart(64, "0");
+        const qr = await rpc("eth_call", [{ to: SWAP, data, from: walletAddr }, "latest"]);
+        const ethOut = decUint(qr);
+        const ethDisplay = ethOut > 1_000_000_000_000_000n
+          ? `${(Number(ethOut) / 1e18).toFixed(6)} ETH`
+          : `${ethOut} wei`;
+        $("sell-confirm-eth").innerHTML = `${ethDisplay} for ${sellCount} sluggs`;
+      } else {
+        $("sell-confirm-eth").innerHTML = `<span style="font-size:11px; color:var(--warn);">need approve first<br>(2 txs total)</span>`;
+      }
+    } catch (e) {
+      $("sell-confirm-eth").innerHTML = `<span style="font-size:11px; color:var(--err);">quote failed (pool needs ETH side first)</span>`;
     }
   } catch (e) {
     $("sell-confirm-target").textContent = "(could not read inventory)";
@@ -834,15 +871,15 @@ function cancelSell() { $("sell-confirm").style.display = "none"; }
 window.sellSlugg = sellSlugg;
 window.cancelSell = cancelSell;
 
-// Real sell: routes 1 USLUG through USluggSwap → v4 pool, returns ETH proceeds.
-async function _doSellLIFO() {
+// Real sell: routes N USLUG through USluggSwap → v4 pool, returns ETH proceeds.
+async function _doSellLIFO(count = 1) {
   if (!walletAddr) return;
   const btn = document.querySelector("#modal-action .ghost");
   const orig = btn?.textContent || "";
   const SEL_ALLOWANCE = "dd62ed3e";
   const SEL_APPROVE   = "095ea7b3";
   const SEL_SELL      = "d3c9727c"; // sell(uint256 amount, uint256 minEthOut, uint256 deadline)
-  const usluggIn = 1000n; // 1.000 USLUG (3 decimals → 1000 raw)
+  const usluggIn = BigInt(count) * 1000n; // count whole sluggs (3 decimals → count*1000 raw)
 
   try {
     // 1. Check allowance — if too low, approve max first
