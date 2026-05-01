@@ -3,9 +3,7 @@ pragma solidity ^0.8.24;
 
 import {IPoolManager}     from "v4-core/interfaces/IPoolManager.sol";
 import {IUnlockCallback}  from "v4-core/interfaces/callback/IUnlockCallback.sol";
-import {IHooks}           from "v4-core/interfaces/IHooks.sol";
 import {PoolKey}          from "v4-core/types/PoolKey.sol";
-import {Currency}         from "v4-core/types/Currency.sol";
 import {BalanceDelta}     from "v4-core/types/BalanceDelta.sol";
 import {TickMath}         from "v4-core/libraries/TickMath.sol";
 import {SwapParams}       from "v4-core/types/PoolOperation.sol";

@@ -1,0 +1,11 @@
+testMode: property
+testLimit: 50000
+seqLen: 100
+shrinkLimit: 5000
+codeSize: 0xc000
+allContracts: true
+sender:
+  - "0x10000"
+  - "0x20000"
+  - "0x30000"
+cryticArgs: ["--foundry-out-directory", "out"]

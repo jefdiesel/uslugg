@@ -4,6 +4,10 @@ out/
 broadcast/
 foundry.lock
 
+# Static-analysis / fuzzer scratch (generated, not source)
+crytic-export/
+echidna-corpus/
+
 # Editor / OS
 .DS_Store
 *.swp
