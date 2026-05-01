@@ -98,7 +98,7 @@ contract USluggSwapTest is Test {
     function test_unlockCallback_rejects_non_pool_manager() public {
         // Build a CB that would otherwise be valid; the auth check fires first.
         bytes memory raw = abi.encode(
-            USluggSwap.CB({sender: alice, isBuy: true, amountSpec: 1_000, limit: 1 ether})
+            USluggSwap.CB({sender: alice, isBuy: true, amountSpec: 1_000, limit: 1 ether, ethProvided: 1 ether})
         );
 
         vm.prank(alice);

@@ -4,6 +4,9 @@ pragma solidity ^0.8.24;
 import {Script, console2} from "forge-std/Script.sol";
 import {Hooks}            from "v4-core/libraries/Hooks.sol";
 import {IPoolManager}     from "v4-core/interfaces/IPoolManager.sol";
+import {IHooks}           from "v4-core/interfaces/IHooks.sol";
+import {PoolKey}          from "v4-core/types/PoolKey.sol";
+import {Currency}         from "v4-core/types/Currency.sol";
 
 import {USluggHook}       from "../src/USluggHook.sol";
 import {USlugg404}        from "../src/USlugg404.sol";
@@ -97,6 +100,27 @@ contract DeployUslugg is Script {
         USluggClaimed claimedNft = new USluggClaimed(address(token), IUSluggRenderer(address(renderer)));
         token.setClaimedNft(IUSluggClaimed(address(claimedNft)));
 
+        // Lock the hook to the legitimate USLUG/WETH pool BEFORE handing
+        // ownership off. Anyone could otherwise create their own pool with
+        // this hook, swap a wei into it, and arbitrarily mutate currentSeed —
+        // breaking the seed-rarity assumption the art relies on. lockPool is
+        // one-shot and onlyOwner; we have to call it while still owner.
+        address weth = _defaultWeth(block.chainid);
+        if (weth != address(0)) {
+            PoolKey memory poolKey = PoolKey({
+                currency0:   Currency.wrap(address(token)),
+                currency1:   Currency.wrap(weth),
+                fee:         3000,
+                tickSpacing: 60,
+                hooks:       IHooks(address(hook))
+            });
+            hook.lockPool(poolKey);
+            console2.log("Hook locked to pool key (USLUG/WETH 0.3%)");
+        } else {
+            console2.log("WARNING: no WETH default for this chain - hook NOT locked.");
+            console2.log("  Call hook.lockPool(key) manually before handing ownership off.");
+        }
+
         // Propose hook ownership handoff (no-op if HOOK_OWNER unset / == deployer).
         // Two-step: HOOK_OWNER must call acceptOwnership() afterwards to finalize.
         // Until then, deployer retains control — that's the safety net against typos.
@@ -154,6 +178,19 @@ contract DeployUslugg is Script {
         if (chainId == 137)      return 0x67366782805870060151383F4BbFF9daB53e5cD6;
         if (chainId == 11155111) return 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543;
         if (chainId == 84532)    return 0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408;
+        return address(0);
+    }
+
+    /// @dev Canonical WETH for each supported chain. Used to compose the
+    /// USLUG/WETH PoolKey we lock the hook to.
+    function _defaultWeth(uint256 chainId) internal pure returns (address) {
+        if (chainId == 1)        return 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+        if (chainId == 8453)     return 0x4200000000000000000000000000000000000006;
+        if (chainId == 42161)    return 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
+        if (chainId == 10)       return 0x4200000000000000000000000000000000000006;
+        if (chainId == 137)      return 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;  // WMATIC
+        if (chainId == 11155111) return 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14;
+        if (chainId == 84532)    return 0x4200000000000000000000000000000000000006;
         return address(0);
     }
 

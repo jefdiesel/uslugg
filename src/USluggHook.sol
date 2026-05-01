@@ -35,16 +35,25 @@ contract USluggHook is IHooks, ISeedSource {
     /// @dev Fee in basis points (10000 = 100%). Default 10 = 0.1%. Hard-capped at 100 = 1%.
     uint16  public feeBps = 10;
 
+    /// @dev keccak256(abi.encode(legitimatePoolKey)). Set ONCE via lockPool.
+    /// Until set, every afterSwap call mutates currentSeed (legacy / pre-lock).
+    /// After set, only the matching pool's afterSwap calls mutate seed and pay
+    /// fees — calls from any other pool short-circuit to zero. This closes the
+    /// "attacker creates a fake pool with our hook and grinds the seed" vector.
+    bytes32 public lockedPoolHash;
+
     error NotPoolManager();
     error NotOwner();
     error NotPendingOwner();
     error HookNotImplemented();
     error FeeTooHigh();
+    error AlreadyLocked();
 
     event FeeBpsSet(uint16 bps);
     event FeesWithdrawn(Currency indexed currency, address indexed to, uint256 amount);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event PoolLocked(bytes32 indexed poolHash);
 
     modifier onlyPoolManager() {
         if (msg.sender != address(poolManager)) revert NotPoolManager();
@@ -89,6 +98,22 @@ contract USluggHook is IHooks, ISeedSource {
         emit OwnershipTransferred(previous, owner);
     }
 
+    /// @notice One-shot pin of the legitimate pool key. Without this, anyone
+    /// can deploy a Uniswap v4 pool with this hook attached (hooks are
+    /// permissionless — only their flag bits gate what they're allowed to
+    /// do), trigger afterSwap with a 1-wei swap on their attacker pool, and
+    /// arbitrarily mutate currentSeed. That breaks the seed-rarity assumption
+    /// the art depends on.
+    ///
+    /// Lock the pool at deploy time (DeployUslugg sets this before handing
+    /// ownership off to the multisig). After lock, afterSwap calls from any
+    /// other pool short-circuit: no seed mutation, no fee, no take.
+    function lockPool(PoolKey calldata key) external onlyOwner {
+        if (lockedPoolHash != 0) revert AlreadyLocked();
+        lockedPoolHash = keccak256(abi.encode(key));
+        emit PoolLocked(lockedPoolHash);
+    }
+
     /// @notice Withdraw accumulated fees. Hook holds real tokens (taken inline
     /// during afterSwap), so this is a simple transfer.
     function withdrawFees(Currency currency, address to, uint256 amount) external onlyOwner {
@@ -118,6 +143,14 @@ contract USluggHook is IHooks, ISeedSource {
         BalanceDelta delta,
         bytes calldata
     ) external override onlyPoolManager returns (bytes4, int128) {
+        // Gate: once locked, only swaps on the legitimate pool mutate seed
+        // and pay fees. Calls from attacker-created pools short-circuit to a
+        // zero-fee no-op so they can't touch our state.
+        bytes32 lock = lockedPoolHash;
+        if (lock != 0 && keccak256(abi.encode(key)) != lock) {
+            return (IHooks.afterSwap.selector, int128(0));
+        }
+
         unchecked { swapCount++; }
         currentSeed = keccak256(
             abi.encode(currentSeed, swapCount, block.prevrandao, block.timestamp, block.number)

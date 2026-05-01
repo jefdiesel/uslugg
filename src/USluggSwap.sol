@@ -48,6 +48,7 @@ contract USluggSwap is IUnlockCallback {
         bool    isBuy;
         uint256 amountSpec;   // buy: usluggOut (exact-output); sell: usluggIn (exact-input), in raw units (3 decimals)
         uint256 limit;        // buy: maxEthIn;                 sell: minEthOut
+        uint256 ethProvided;  // msg.value at the top of buy() — used for precise refund accounting
     }
 
     constructor(IPoolManager _pm, IWETH9 _weth, IERC20Min _slugg, PoolKey memory _key) {
@@ -63,7 +64,7 @@ contract USluggSwap is IUnlockCallback {
         if (block.timestamp > deadline) revert Expired();
         require(msg.value >= maxEthIn, "msg.value < maxEthIn");
         ethSpent = abi.decode(
-            poolManager.unlock(abi.encode(CB(msg.sender, true, usluggOut, maxEthIn))),
+            poolManager.unlock(abi.encode(CB(msg.sender, true, usluggOut, maxEthIn, msg.value))),
             (uint256)
         );
     }
@@ -73,7 +74,7 @@ contract USluggSwap is IUnlockCallback {
         if (block.timestamp > deadline) revert Expired();
         require(slugg.transferFrom(msg.sender, address(this), usluggAmount), "USLUG transferFrom");
         ethOut = abi.decode(
-            poolManager.unlock(abi.encode(CB(msg.sender, false, usluggAmount, minEthOut))),
+            poolManager.unlock(abi.encode(CB(msg.sender, false, usluggAmount, minEthOut, 0))),
             (uint256)
         );
     }
@@ -111,8 +112,14 @@ contract USluggSwap is IUnlockCallback {
             uint256 usluggOut = uint256(d0);
             poolManager.take(key.currency0, p.sender, usluggOut);
 
-            if (address(this).balance > 0) {
-                (bool ok,) = p.sender.call{value: address(this).balance}("");
+            // Refund only the unspent portion of THIS buyer's ETH. Earlier
+            // versions sent address(this).balance, which would have swept any
+            // pre-existing balance the contract held (e.g. ETH sent directly
+            // via receive()) into the next buyer's pocket.
+            uint256 refund;
+            unchecked { refund = p.ethProvided - wethOwed; }   // ethProvided ≥ maxEthIn ≥ wethOwed
+            if (refund > 0) {
+                (bool ok,) = p.sender.call{value: refund}("");
                 if (!ok) revert EthRefundFailed();
             }
             return abi.encode(wethOwed);

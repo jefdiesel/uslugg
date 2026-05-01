@@ -4,6 +4,10 @@ pragma solidity ^0.8.24;
 import {IUSluggRenderer} from "./IUSluggRenderer.sol";
 import {IUSluggClaimed, IUSluggClaimedAdmin} from "./IUSluggClaimed.sol";
 
+interface IERC721Receiver {
+    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external returns (bytes4);
+}
+
 /// @notice Standalone ERC-721 minted when a holder calls USlugg404.claim().
 ///
 /// The reason this contract exists separately from the 404 hybrid: NFT marketplaces
@@ -135,11 +139,28 @@ contract USluggClaimed is IUSluggClaimed, IUSluggClaimedAdmin {
     }
 
     function safeTransferFrom(address from, address to, uint256 id) external {
-        transferFrom(from, to, id);
+        safeTransferFrom(from, to, id, "");
     }
 
-    function safeTransferFrom(address from, address to, uint256 id, bytes calldata) external {
+    /// @notice ERC-721 spec compliant: when `to` is a contract, must call
+    /// onERC721Received and verify the magic return value. Sending to a
+    /// contract that doesn't implement the receiver hook reverts (which is
+    /// the whole point — `safe`TransferFrom protects against locking the NFT
+    /// in a contract that has no idea how to handle ERC-721s).
+    function safeTransferFrom(address from, address to, uint256 id, bytes memory data) public {
         transferFrom(from, to, id);
+        if (to.code.length > 0) {
+            try IERC721Receiver(to).onERC721Received(msg.sender, from, id, data)
+                returns (bytes4 ret)
+            {
+                if (ret != IERC721Receiver.onERC721Received.selector) {
+                    revert("non-ERC721Receiver");
+                }
+            } catch (bytes memory reason) {
+                if (reason.length == 0) revert("non-ERC721Receiver");
+                assembly { revert(add(32, reason), mload(reason)) }
+            }
+        }
     }
 
     function approve(address to, uint256 id) external {

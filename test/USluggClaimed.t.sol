@@ -232,6 +232,43 @@ contract USluggClaimedTest is Test {
         assertEq(claimed.ownerOf(id), carol);
     }
 
+    /// @notice VULN/FIX: ERC-721 safeTransferFrom MUST call onERC721Received
+    /// on contract receivers. Without this, NFTs sent to plain contracts get
+    /// stuck.
+    function test_FIX_safeTransferFrom_to_non_receiver_contract_reverts() public {
+        uint256 id = claimed.mint(alice, bytes32(uint256(1)), 0);
+        NonReceiver dst = new NonReceiver();
+
+        vm.prank(alice);
+        vm.expectRevert();   // bubbles up "non-ERC721Receiver" or empty revert
+        claimed.safeTransferFrom(alice, address(dst), id);
+
+        // Original owner unchanged.
+        assertEq(claimed.ownerOf(id), alice);
+    }
+
+    function test_FIX_safeTransferFrom_to_proper_receiver_succeeds() public {
+        uint256 id = claimed.mint(alice, bytes32(uint256(1)), 0);
+        GoodReceiver dst = new GoodReceiver();
+
+        vm.prank(alice);
+        claimed.safeTransferFrom(alice, address(dst), id, "metadata");
+
+        assertEq(claimed.ownerOf(id), address(dst));
+        assertEq(dst.lastFrom(),  alice);
+        assertEq(dst.lastId(),    id);
+        assertEq(dst.lastData(),  bytes("metadata"));
+    }
+
+    function test_FIX_safeTransferFrom_to_eoa_still_works() public {
+        // EOAs (no code) bypass the receiver check — same as before.
+        uint256 id = claimed.mint(alice, bytes32(uint256(1)), 0);
+
+        vm.prank(alice);
+        claimed.safeTransferFrom(alice, bob, id);
+        assertEq(claimed.ownerOf(id), bob);
+    }
+
     // -------- tokenURI --------
 
     function test_tokenURI_returns_renderer_output() public {
@@ -253,5 +290,26 @@ contract USluggClaimedTest is Test {
         assertTrue(claimed.supportsInterface(0x5b5e139f), "ERC-721 Metadata");
         assertTrue(claimed.supportsInterface(0x2a55205a), "EIP-2981");
         assertFalse(claimed.supportsInterface(0xdeadbeef));
+    }
+}
+
+/// @dev Plain contract with no onERC721Received. safeTransferFrom must reject.
+contract NonReceiver {}
+
+/// @dev Proper ERC-721 receiver — captures the call args for inspection.
+contract GoodReceiver {
+    address public lastOperator;
+    address public lastFrom;
+    uint256 public lastId;
+    bytes   public lastData;
+
+    function onERC721Received(address operator, address from, uint256 id, bytes calldata data)
+        external returns (bytes4)
+    {
+        lastOperator = operator;
+        lastFrom     = from;
+        lastId       = id;
+        lastData     = data;
+        return this.onERC721Received.selector;
     }
 }

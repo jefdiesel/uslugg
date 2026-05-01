@@ -197,12 +197,83 @@ contract USluggHookTest is Test {
         hook.beforeInitialize(address(this), key, 0);
     }
 
+    // -------- VULN: hook is permissionless across pools --------
+    // Anyone can attach this hook to any pool they create. Without lockPool,
+    // attacker-pool swaps mutate currentSeed too, letting MEV searchers grind
+    // for rare sluggs deterministically.
+
+    function test_VULN_unlocked_hook_seed_mutates_for_any_pool() public {
+        // Two distinct pool keys — neither has been locked yet.
+        PoolKey memory ourKey      = _keyWith(address(0x111), address(0x222));
+        PoolKey memory attackerKey = _keyWith(address(0xAAA), address(0xBBB));
+
+        bytes32 s0 = hook.currentSeed();
+        _afterSwapWithKey(ourKey,      true, -1_000, 1_000, -1_500);
+        bytes32 s1 = hook.currentSeed();
+        assertTrue(s1 != s0, "our pool: seed should mutate");
+
+        // VULN: an attacker pool also mutates the seed pre-lock.
+        _afterSwapWithKey(attackerKey, true, -1_000, 1_000, -1_500);
+        bytes32 s2 = hook.currentSeed();
+        assertTrue(s2 != s1, "attacker pool ALSO mutates seed pre-lock (this is the bug)");
+    }
+
+    function test_FIX_locked_hook_ignores_other_pools() public {
+        PoolKey memory ourKey      = _keyWith(address(0x111), address(0x222));
+        PoolKey memory attackerKey = _keyWith(address(0xAAA), address(0xBBB));
+
+        // Lock to ourKey.
+        hook.lockPool(ourKey);
+        assertTrue(hook.lockedPoolHash() != bytes32(0), "lockedPoolHash set");
+
+        // Our pool: seed still mutates.
+        bytes32 s0 = hook.currentSeed();
+        uint64  c0 = hook.swapCount();
+        _afterSwapWithKey(ourKey, true, -1_000, 1_000, -1_500);
+        bytes32 s1 = hook.currentSeed();
+        assertTrue(s1 != s0, "our pool: seed must still mutate after lock");
+        assertEq(hook.swapCount(), c0 + 1, "our pool: swapCount++");
+
+        // Attacker pool: NOTHING happens. Same seed, same swapCount.
+        _afterSwapWithKey(attackerKey, true, -1_000, 1_000, -1_500);
+        assertEq(hook.currentSeed(), s1,    "attacker pool MUST NOT mutate seed");
+        assertEq(hook.swapCount(),   c0 + 1, "attacker pool MUST NOT advance swapCount");
+
+        // Attacker pool also gets zero fee back (the second return value),
+        // verified by re-running through the helper.
+        (, int128 fee) = _afterSwapReturn(attackerKey, true, -1_000_000, 1_000_000, -1_500_000);
+        assertEq(int256(fee), int256(0), "attacker pool fee delta must be zero");
+    }
+
+    function test_lockPool_only_owner() public {
+        PoolKey memory ourKey = _keyWith(address(0x111), address(0x222));
+        vm.prank(alice);
+        vm.expectRevert(USluggHook.NotOwner.selector);
+        hook.lockPool(ourKey);
+    }
+
+    function test_lockPool_is_one_shot() public {
+        PoolKey memory ourKey      = _keyWith(address(0x111), address(0x222));
+        PoolKey memory attackerKey = _keyWith(address(0xAAA), address(0xBBB));
+
+        hook.lockPool(ourKey);
+
+        // Owner cannot re-lock to a different pool — protects against late
+        // owner compromise / mistake.
+        vm.expectRevert(USluggHook.AlreadyLocked.selector);
+        hook.lockPool(attackerKey);
+    }
+
     // -------- helpers --------
 
     function _key() internal pure returns (PoolKey memory) {
+        return _keyWith(address(0xCC0), address(0xCC1));
+    }
+
+    function _keyWith(address c0, address c1) internal pure returns (PoolKey memory) {
         return PoolKey({
-            currency0:   Currency.wrap(address(0xCC0)),
-            currency1:   Currency.wrap(address(0xCC1)),
+            currency0:   Currency.wrap(c0),
+            currency1:   Currency.wrap(c1),
             fee:         3000,
             tickSpacing: 60,
             hooks:       IHooks(address(0))
@@ -212,7 +283,18 @@ contract USluggHookTest is Test {
     function _afterSwap(bool zeroForOne, int256 amountSpecified, int128 amount0, int128 amount1)
         internal returns (bytes4 selector, int128 feeDelta)
     {
-        PoolKey memory key = _key();
+        return _afterSwapReturn(_key(), zeroForOne, amountSpecified, amount0, amount1);
+    }
+
+    function _afterSwapWithKey(PoolKey memory key, bool zeroForOne, int256 amountSpecified, int128 amount0, int128 amount1)
+        internal
+    {
+        _afterSwapReturn(key, zeroForOne, amountSpecified, amount0, amount1);
+    }
+
+    function _afterSwapReturn(PoolKey memory key, bool zeroForOne, int256 amountSpecified, int128 amount0, int128 amount1)
+        internal returns (bytes4 selector, int128 feeDelta)
+    {
         SwapParams memory sp = SwapParams({
             zeroForOne:        zeroForOne,
             amountSpecified:   amountSpecified,
