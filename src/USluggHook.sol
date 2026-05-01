@@ -42,6 +42,13 @@ contract USluggHook is IHooks, ISeedSource {
     /// "attacker creates a fake pool with our hook and grinds the seed" vector.
     bytes32 public lockedPoolHash;
 
+    /// @dev Transient storage slot for the "swap fired on locked pool this tx"
+    /// flag. EIP-1153 tload/tstore at slot 0. Auto-clears at end of tx.
+    /// USlugg404._move reads this through ISeedSource.swapFiredThisTx() to
+    /// gate receive-side auto-minting — only seed-rolled USLUG (path A or
+    /// callHook path C) materializes sluggs.
+    uint256 private constant _SWAP_FIRED_SLOT = 0;
+
     error NotPoolManager();
     error NotOwner();
     error NotPendingOwner();
@@ -156,6 +163,11 @@ contract USluggHook is IHooks, ISeedSource {
             abi.encode(currentSeed, swapCount, block.prevrandao, block.timestamp, block.number)
         );
 
+        // Set transient flag AFTER seed mutation so any reader within this tx
+        // (USlugg404._move on the receive branch) sees `swapFiredThisTx()==true`
+        // and reads the freshly-rolled `currentSeed`.
+        assembly { tstore(_SWAP_FIRED_SLOT, 1) }
+
         // Canonical Uniswap pattern (FeeTakingHook). Fee is taken on the unspecified
         // currency = the side opposite the amountSpecified argument.
         bool specifiedTokenIs0 = (params.amountSpecified < 0 == params.zeroForOne);
@@ -172,6 +184,13 @@ contract USluggHook is IHooks, ISeedSource {
 
         poolManager.take(feeCurrency, address(this), feeAmount);
         return (IHooks.afterSwap.selector, _toInt128(feeAmount));
+    }
+
+    /// @notice ISeedSource: true iff afterSwap fired on the locked pool earlier
+    /// in this same tx. Backed by EIP-1153 transient storage; auto-clears at
+    /// end of tx, so subsequent txs always start at false.
+    function swapFiredThisTx() external view override returns (bool flag) {
+        assembly { flag := tload(_SWAP_FIRED_SLOT) }
     }
 
     /// @dev SafeCast for fee → int128.
