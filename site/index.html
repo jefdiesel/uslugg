@@ -172,14 +172,10 @@
       </div>
 
       <div style="margin:0 0 16px; padding:12px; background:#0a1a05; border:1px solid var(--accent); border-radius:4px;">
-        <div style="font-size:10px; color:var(--accent); letter-spacing:2px; margin-bottom:8px;">▸ PROTECT IT — CLAIM AS ERC-721 FIRST</div>
-        <p style="margin:0 0 8px; font-size:12px; color:var(--fg);">Claim lifts that specific slugg into a standalone ERC-721 (visible on OpenSea / Blur, transferable, and out of the LIFO queue). Three steps:</p>
-        <ol style="margin:0 0 10px 18px; font-size:12px; color:var(--fg); padding:0;">
-          <li>Click <b>PROTECT #N</b> below — wallet prompts to sign claim()</li>
-          <li>Confirm in wallet (claim fee 0.0001 ETH on testnet)</li>
-          <li>Slugg is now safe in your wallet as a real NFT — appears in YOUR CLAIMED. The next sell will burn a different slugg.</li>
-        </ol>
-        <button id="sell-confirm-protect" class="ghost" style="border-color:var(--accent); color:var(--accent); font-size:11px;">PROTECT #—</button>
+        <div style="font-size:10px; color:var(--accent); letter-spacing:2px; margin-bottom:8px;">▸ PROTECT — CLAIM AS ERC-721</div>
+        <p style="margin:0 0 8px; font-size:12px; color:var(--fg);">Claim lifts that specific slugg into a standalone ERC-721 (visible on OpenSea / Blur, transferable, out of the LIFO queue).</p>
+        <p style="margin:0 0 10px; font-size:11px; color:var(--warn);"><b>One slugg per click</b> — each claim is a separate tx + fee. To save all <span id="sell-confirm-allcount">N</span> in this sell, you'd run claim() <span id="sell-confirm-allcount2">N</span> times (cancel + reopen the sell dialog after each, or use the per-card CLAIM button on each slugg in YOUR SLUGGS).</p>
+        <button id="sell-confirm-protect" class="ghost" style="border-color:var(--accent); color:var(--accent); font-size:11px;">PROTECT —</button>
       </div>
 
       <div style="margin:0 0 14px;">
@@ -817,7 +813,7 @@ async function sellSlugg() {
       ? `slugg <b>#${targets[0]}</b>`
       : `${targets.length} sluggs: ${targets.map(t => `<b>#${t}</b>`).join(", ")}`;
     $("sell-confirm-num").textContent = targets.length === 1 ? targets[0] : `${targets.length} sluggs`;
-    protectBtn.textContent = `PROTECT FIRST (#${lastId})`;
+    protectBtn.textContent = sellCount === 1 ? `PROTECT #${lastId}` : `PROTECT #${lastId} (1 of ${sellCount})`;
     protectBtn.disabled = false;
     protectBtn.onclick = async () => {
       protectBtn.disabled = true;
@@ -825,6 +821,8 @@ async function sellSlugg() {
       cancelSell();
       await claim(lastId);
     };
+    if ($("sell-confirm-allcount")) $("sell-confirm-allcount").textContent = sellCount;
+    if ($("sell-confirm-allcount2")) $("sell-confirm-allcount2").textContent = sellCount;
 
     // Animation preview of the LAST inventory entry (the most-imminent burn)
     const previewBox = $("sell-confirm-preview");
