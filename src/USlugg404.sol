@@ -75,7 +75,10 @@ contract USlugg404 {
     address public swapRouter;
     bool internal _routerSet;
 
-    ISeedSource public seed;
+    /// @dev Immutable: pinned at deploy. No setter exists. Closes the backdoor
+    /// where a compromised owner could repoint randomness at a controlled
+    /// source and grind any rare seed.
+    ISeedSource public immutable seed;
     IUSluggRenderer public renderer;
     IUSluggClaimed  public claimedNft;
 
@@ -138,6 +141,9 @@ contract USlugg404 {
     error EthLegFailed();       // sell leg returned 0 ETH (or buy leg overshot; defense-in-depth)
     error InsufficientBuffer(); // callHook caller didn't budget the worst-case slippage buffer
     error EthRefundFailed();    // dust refund to caller after callHook failed
+    error SeedSourceAlreadySet();
+    error RendererAlreadySet();
+    error ClaimedNftAlreadySet();
 
     /// @dev Hard ceiling on `maxSlippageBps` for callHook. 500 = 5%. Caller-
     /// supplied; UI defaults to 100 (1%) but we enforce the ceiling on-chain.
@@ -187,22 +193,31 @@ contract USlugg404 {
 
     // -------- admin --------
 
-    function setSeedSource(ISeedSource s) external onlyOwner {
-        seed = s;
-        emit SeedSourceSet(address(s));
-    }
+    // setSeedSource removed: `seed` is immutable, set in constructor.
+    // No post-deploy mutation of the randomness source is possible.
 
     function setSkip(address a, bool v) external onlyOwner {
         skipSluggs[a] = v;
         emit SkipSet(a, v);
     }
 
+    /// @notice One-shot: set the in-404 renderer. Reverts on second call.
+    /// Without this guard, a compromised owner could swap the renderer to one
+    /// that returns altered SVGs (visual vandalism, fake "rare" art appearing
+    /// on commons). After the initial wire-up at deploy, the renderer is
+    /// permanently pinned.
     function setRenderer(IUSluggRenderer r) external onlyOwner {
+        if (address(renderer) != address(0)) revert RendererAlreadySet();
         renderer = r;
         emit RendererSet(address(r));
     }
 
+    /// @notice One-shot: set the standalone USluggClaimed ERC-721. Reverts on
+    /// second call. Without this guard, a compromised owner could swap the
+    /// claimed-NFT contract to one that hands out attacker-owned tokens on
+    /// wrap() / steals tokens on unwrap(). Pinned at deploy.
     function setClaimedNft(IUSluggClaimed c) external onlyOwner {
+        if (address(claimedNft) != address(0)) revert ClaimedNftAlreadySet();
         claimedNft = c;
         emit ClaimedNftSet(address(c));
     }

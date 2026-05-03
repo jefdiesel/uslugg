@@ -163,6 +163,35 @@ contract USlugg404Test is Test {
         new USlugg404(hook, treasury, MAX, 0);
     }
 
+    // ---- HARDENING (post-uPEG-audit): backdoor closures ----
+
+    /// @notice setRenderer is one-shot. The first wire-up at deploy succeeds;
+    /// any later attempt to swap the renderer reverts with RendererAlreadySet.
+    /// Closes the vector where a compromised owner repoints the renderer at a
+    /// malicious one (visual vandalism / fake rare art on commons).
+    function test_setRendererIsOneShot() public {
+        // setUp already wired renderer. A second call from owner must revert.
+        IUSluggRenderer attacker = IUSluggRenderer(address(0xBAD));
+        vm.expectRevert(USlugg404.RendererAlreadySet.selector);
+        token.setRenderer(attacker);
+    }
+
+    /// @notice setClaimedNft is one-shot. Same reasoning as renderer — a
+    /// compromised owner could otherwise swap claimedNft to a contract that
+    /// hands out attacker-owned tokens on wrap() or steals on unwrap().
+    function test_setClaimedNftIsOneShot() public {
+        IUSluggClaimed attacker = IUSluggClaimed(address(0xBAD));
+        vm.expectRevert(USlugg404.ClaimedNftAlreadySet.selector);
+        token.setClaimedNft(attacker);
+    }
+
+    /// @notice seed is `immutable` — there is no setter at all. This test
+    /// verifies the value pinned at deploy is what we read post-deploy and
+    /// cannot be changed by ANY path.
+    function test_seedSourceImmutable() public view {
+        assertEq(address(token.seed()), address(hook), "seed must equal constructor arg");
+    }
+
     /// @notice Treasury → Alice transfer of 5.000 USLUG mints 5 NFTs to Alice.
     function test_buy_mints_nfts() public {
         vm.prank(treasury);
