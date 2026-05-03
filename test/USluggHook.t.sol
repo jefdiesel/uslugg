@@ -151,20 +151,13 @@ contract USluggHookTest is Test {
 
     // -------- afterSwap seed + fee logic --------
 
-    function test_seed_mutates_each_call_and_swapCount_increments() public {
-        bytes32 s0 = hook.currentSeed();
-        uint64  c0 = hook.swapCount();
-
-        _afterSwap(true, -1_000, 1_000, -1_500);  // exact-input zeroForOne, fee taken on currency1
-        bytes32 s1 = hook.currentSeed();
-        uint64  c1 = hook.swapCount();
-        assertTrue(s1 != s0, "seed mutates");
-        assertEq(c1, c0 + 1, "count++");
-
-        _afterSwap(false, 1_000, 1_000, -1_500);
-        bytes32 s2 = hook.currentSeed();
-        assertTrue(s2 != s1, "seed mutates again");
-        assertEq(hook.swapCount(), c0 + 2, "count++ again");
+    function test_swapFiredThisTx_set_after_afterSwap() public {
+        // Pre-swap: flag is false (transient storage clears between txs)
+        // We're in the same test function = one tx, so the flag may be set
+        // from a prior call within this tx; ensure we start clean by
+        // running afterSwap then asserting.
+        _afterSwap(true, -1_000, 1_000, -1_500);
+        assertTrue(hook.swapFiredThisTx(), "flag must be set after afterSwap");
     }
 
     function test_afterSwap_returns_fee_in_unspecified_currency() public {
@@ -199,48 +192,18 @@ contract USluggHookTest is Test {
 
     // -------- VULN: hook is permissionless across pools --------
     // Anyone can attach this hook to any pool they create. Without lockPool,
-    // attacker-pool swaps mutate currentSeed too, letting MEV searchers grind
-    // for rare sluggs deterministically.
-
-    function test_VULN_unlocked_hook_seed_mutates_for_any_pool() public {
-        // Two distinct pool keys — neither has been locked yet.
-        PoolKey memory ourKey      = _keyWith(address(0x111), address(0x222));
-        PoolKey memory attackerKey = _keyWith(address(0xAAA), address(0xBBB));
-
-        bytes32 s0 = hook.currentSeed();
-        _afterSwapWithKey(ourKey,      true, -1_000, 1_000, -1_500);
-        bytes32 s1 = hook.currentSeed();
-        assertTrue(s1 != s0, "our pool: seed should mutate");
-
-        // VULN: an attacker pool also mutates the seed pre-lock.
-        _afterSwapWithKey(attackerKey, true, -1_000, 1_000, -1_500);
-        bytes32 s2 = hook.currentSeed();
-        assertTrue(s2 != s1, "attacker pool ALSO mutates seed pre-lock (this is the bug)");
-    }
+    // attacker-pool swaps would set the swapFiredThisTx flag too, letting an
+    // attacker-pool swap unlock auto-mints in our token.
 
     function test_FIX_locked_hook_ignores_other_pools() public {
         PoolKey memory ourKey      = _keyWith(address(0x111), address(0x222));
         PoolKey memory attackerKey = _keyWith(address(0xAAA), address(0xBBB));
 
-        // Lock to ourKey.
         hook.lockPool(ourKey);
         assertTrue(hook.lockedPoolHash() != bytes32(0), "lockedPoolHash set");
 
-        // Our pool: seed still mutates.
-        bytes32 s0 = hook.currentSeed();
-        uint64  c0 = hook.swapCount();
-        _afterSwapWithKey(ourKey, true, -1_000, 1_000, -1_500);
-        bytes32 s1 = hook.currentSeed();
-        assertTrue(s1 != s0, "our pool: seed must still mutate after lock");
-        assertEq(hook.swapCount(), c0 + 1, "our pool: swapCount++");
-
-        // Attacker pool: NOTHING happens. Same seed, same swapCount.
-        _afterSwapWithKey(attackerKey, true, -1_000, 1_000, -1_500);
-        assertEq(hook.currentSeed(), s1,    "attacker pool MUST NOT mutate seed");
-        assertEq(hook.swapCount(),   c0 + 1, "attacker pool MUST NOT advance swapCount");
-
-        // Attacker pool also gets zero fee back (the second return value),
-        // verified by re-running through the helper.
+        // Attacker pool: zero fee back (the only side-effect, since
+        // currentSeed/swapCount are gone post-no-prevrandao redesign).
         (, int128 fee) = _afterSwapReturn(attackerKey, true, -1_000_000, 1_000_000, -1_500_000);
         assertEq(int256(fee), int256(0), "attacker pool fee delta must be zero");
     }

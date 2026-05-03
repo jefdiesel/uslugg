@@ -10,22 +10,12 @@ import {USluggRuntime}   from "../src/USluggRuntime.sol";
 import {IUSluggRenderer} from "../src/IUSluggRenderer.sol";
 import {IUSluggClaimed}  from "../src/IUSluggClaimed.sol";
 
-/// @dev Stub ISeedSource so tests don't need the real v4 hook + PoolManager
-/// dance. Mimics what USluggHook would expose: a currentSeed that mutates
-/// every "swap" plus a swapCount counter, and a configurable swapFiredThisTx
-/// flag that gates auto-mint on the receive branch of _move.
+/// @dev Stub ISeedSource for tests. Post-no-prevrandao redesign, the
+/// interface is just `swapFiredThisTx()` — no on-chain seed lives in the
+/// hook anymore (per-mint randomness comes from blockhash at reveal time
+/// inside USlugg404). Test-controlled bool for the auto-mint gate.
 contract MockSeedSource is ISeedSource {
-    bytes32 public override currentSeed;
-    uint64  public override swapCount;
-    /// @dev Test-controlled. Tests that exercise auto-mint set this true; tests
-    /// that exercise "USLUG without slugg" leave it false. Production hook uses
-    /// EIP-1153 transient storage gated on locked-pool afterSwap.
     bool public swapFired = true;
-
-    function reroll() external {
-        unchecked { swapCount++; }
-        currentSeed = keccak256(abi.encode(currentSeed, swapCount, block.prevrandao));
-    }
 
     function swapFiredThisTx() external view override returns (bool) {
         return swapFired;
@@ -34,6 +24,10 @@ contract MockSeedSource is ISeedSource {
     function setSwapFired(bool v) external {
         swapFired = v;
     }
+
+    /// @dev Kept for backward-compat with tests that called reroll() between
+    /// "swaps". No-op now since there's no stored seed.
+    function reroll() external {}
 }
 
 /// @dev Light-weight stand-in for USluggSwap that exercises just the
@@ -192,6 +186,142 @@ contract USlugg404Test is Test {
         assertEq(address(token.seed()), address(hook), "seed must equal constructor arg");
     }
 
+    /// @notice setSkip is add-only. v=false reverts; v=true is idempotent.
+    function test_setSkipAddOnly() public {
+        // Cannot un-skip an existing skip
+        vm.expectRevert(USlugg404.CannotUnskip.selector);
+        token.setSkip(treasury, false);
+
+        // Adding a fresh skip works
+        address newAddr = address(0xDEAD);
+        assertEq(token.skipSluggs(newAddr), false);
+        token.setSkip(newAddr, true);
+        assertEq(token.skipSluggs(newAddr), true);
+
+        // Re-adding is no-op (no revert)
+        token.setSkip(newAddr, true);
+
+        // Cannot un-skip the new one either
+        vm.expectRevert(USlugg404.CannotUnskip.selector);
+        token.setSkip(newAddr, false);
+    }
+
+    /// @notice setWrapFee + setUnwrapFee enforce hard caps.
+    function test_wrapFeeCaps() public {
+        // Cache the public constant once — vm.expectRevert applies to the
+        // very next external call, including a public-getter read.
+        uint256 cap = token.MAX_WRAP_FEE_WEI();
+        token.setWrapFee(cap);
+        token.setUnwrapFee(cap);
+        vm.expectRevert(USlugg404.WrapFeeTooHigh.selector);
+        token.setWrapFee(cap + 1);
+        vm.expectRevert(USlugg404.UnwrapFeeTooHigh.selector);
+        token.setUnwrapFee(cap + 1);
+    }
+
+    /// @notice Treasury transfer is two-step: propose then accept.
+    function test_treasuryTwoStepTransfer() public {
+        address payable newT = payable(address(0xCAFE));
+        token.proposeTreasury(newT);
+        // Treasury hasn't changed yet
+        assertEq(token.treasury(), treasury);
+        // Wrong address can't accept
+        vm.expectRevert(USlugg404.NotPendingTreasury.selector);
+        token.acceptTreasury();
+        // Pending address accepts
+        vm.prank(newT);
+        token.acceptTreasury();
+        assertEq(token.treasury(), newT);
+        // Pending cleared
+        assertEq(token.pendingTreasury(), address(0));
+    }
+
+    /// @notice _move caps batch mints at MAX_MINTS_PER_TX. Trying to buy
+    /// more in one tx reverts with BatchTooLarge.
+    function test_batchSizeCapped() public {
+        uint256 oversize = (token.MAX_MINTS_PER_TX() + 1) * TPS;
+        vm.prank(treasury);
+        vm.expectRevert(USlugg404.BatchTooLarge.selector);
+        token.transfer(alice, oversize);
+
+        // Exactly at cap works
+        uint256 atCap = token.MAX_MINTS_PER_TX() * TPS;
+        vm.prank(treasury);
+        token.transfer(alice, atCap);
+        assertEq(token.sluggsOwned(alice), token.MAX_MINTS_PER_TX());
+    }
+
+    /// @notice Sluggs start unrevealed. reveal() too early reverts. After
+    /// REVEAL_DELAY blocks, anyone can reveal and the seed becomes deterministic
+    /// from blockhash(mintBlock + REVEAL_DELAY).
+    function test_revealLifecycle() public {
+        vm.prank(treasury);
+        token.transfer(alice, 1 * TPS);
+        // Pre-reveal: seed is zero
+        (bytes32 s0,,) = token.sluggs(0);
+        assertEq(s0, bytes32(0), "seed unrevealed at mint");
+
+        // Too early
+        vm.expectRevert(USlugg404.NotYetRevealable.selector);
+        token.reveal(0);
+
+        // Roll forward but still inside REVEAL_DELAY: too early
+        vm.roll(block.number + 1);
+        vm.expectRevert(USlugg404.NotYetRevealable.selector);
+        token.reveal(0);
+
+        // Past REVEAL_DELAY: reveal works
+        vm.roll(block.number + uint256(token.REVEAL_DELAY()) + 1);
+        token.reveal(0);
+        (s0,,) = token.sluggs(0);
+        assertTrue(s0 != bytes32(0), "seed revealed");
+
+        // Cannot double-reveal
+        vm.expectRevert(USlugg404.AlreadyRevealed.selector);
+        token.reveal(0);
+
+        // reveal of non-existent id reverts
+        vm.expectRevert(USlugg404.NotMinted.selector);
+        token.reveal(99999);
+    }
+
+    /// @notice wrap before MIN_WRAP_AGE reverts. Combined with REVEAL_DELAY,
+    /// this defeats single-tx atomic mint→inspect→wrap-rare→sell-rest.
+    function test_wrapAgeGate() public {
+        vm.prank(treasury);
+        token.transfer(alice, 1 * TPS);
+
+        // Reveal so seed is non-zero (wrap also requires this)
+        vm.roll(block.number + uint256(token.REVEAL_DELAY()) + 1);
+        token.reveal(0);
+
+        // Try to wrap before MIN_WRAP_AGE — reverts
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        vm.expectRevert(USlugg404.WrapTooSoon.selector);
+        token.wrap{value: 0.001111 ether}(0);
+
+        // After MIN_WRAP_AGE, allowed
+        vm.roll(block.number + uint256(token.MIN_WRAP_AGE()));
+        vm.prank(alice);
+        token.wrap{value: 0.001111 ether}(0);
+        // Slugg burned
+        assertEq(token.ownerOf(0), address(0));
+    }
+
+    /// @notice Wrapping an unrevealed slugg reverts (would freeze art identity to 0).
+    function test_wrapRequiresReveal() public {
+        vm.prank(treasury);
+        token.transfer(alice, 1 * TPS);
+
+        // Roll past wrap age but DO NOT reveal
+        vm.roll(block.number + uint256(token.MIN_WRAP_AGE()) + uint256(token.REVEAL_DELAY()) + 1);
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        vm.expectRevert(USlugg404.NotYetRevealable.selector);
+        token.wrap{value: 0.001111 ether}(0);
+    }
+
     /// @notice Treasury → Alice transfer of 5.000 USLUG mints 5 NFTs to Alice.
     function test_buy_mints_nfts() public {
         vm.prank(treasury);
@@ -200,10 +330,22 @@ contract USlugg404Test is Test {
         assertEq(token.balanceOf(alice), 5 * TPS, "alice balance");
         assertEq(token.sluggsOwned(alice), 5, "alice nft count");
 
-        // All NFTs have unique seeds derived from hook's currentSeed
+        // Sluggs are unrevealed at mint — seed is bytes32(0) until reveal()
         bytes32 a0; bytes32 a1;
         (a0,,) = token.sluggs(0);
         (a1,,) = token.sluggs(1);
+        assertEq(a0, bytes32(0), "seed unrevealed pre-reveal");
+        assertEq(a1, bytes32(0), "seed unrevealed pre-reveal");
+
+        // Roll past REVEAL_DELAY so blockhash(mintBlock + REVEAL_DELAY) is available
+        vm.roll(block.number + uint256(token.REVEAL_DELAY()) + 1);
+        token.reveal(0);
+        token.reveal(1);
+
+        (a0,,) = token.sluggs(0);
+        (a1,,) = token.sluggs(1);
+        assertTrue(a0 != bytes32(0), "seed revealed");
+        assertTrue(a1 != bytes32(0), "seed revealed");
         assertTrue(a0 != a1, "seeds must differ across mints");
 
         assertEq(token.ownerOf(0), alice);
@@ -215,6 +357,9 @@ contract USlugg404Test is Test {
         vm.prank(treasury);
         token.transfer(alice, 1 * TPS);
 
+        // Reveal alice's slugg first so we have a known seed to compare to
+        vm.roll(block.number + uint256(token.REVEAL_DELAY()) + 1);
+        token.reveal(0);
         bytes32 firstSeed;
         (firstSeed,,) = token.sluggs(0);
 
@@ -223,10 +368,14 @@ contract USlugg404Test is Test {
         token.transfer(treasury, 1 * TPS);
         assertEq(token.sluggsOwned(alice), 0, "alice nfts after sell");
 
-        // Hook re-rolls, then Bob buys
-        hook.reroll();
+        // Roll a few more blocks (so bob's mint reveal block differs from alice's)
+        vm.roll(block.number + 10);
         vm.prank(treasury);
         token.transfer(bob, 1 * TPS);
+
+        // Reveal bob's slugg
+        vm.roll(block.number + uint256(token.REVEAL_DELAY()) + 1);
+        token.reveal(1);
 
         bytes32 bobSeed;
         (bobSeed,,) = token.sluggs(1);  // nextSluggId continues, so id=1
@@ -244,11 +393,20 @@ contract USlugg404Test is Test {
     }
 
     /// @notice wrap() lifts a Slugg into the standalone ERC-721. Pays fee.
+    /// Requires the slugg to be revealed and at least MIN_WRAP_AGE blocks old.
     function test_wrap_creates_standalone_erc721() public {
         vm.prank(treasury);
         token.transfer(alice, 1 * TPS);
 
         uint256 sluggId = 0;
+
+        // Reveal first (wrap requires non-zero seed)
+        vm.roll(block.number + uint256(token.REVEAL_DELAY()) + 1);
+        token.reveal(sluggId);
+
+        // Roll past MIN_WRAP_AGE
+        vm.roll(block.number + uint256(token.MIN_WRAP_AGE()));
+
         bytes32 origSeed;
         (origSeed,,) = token.sluggs(sluggId);
 
@@ -263,14 +421,18 @@ contract USlugg404Test is Test {
         (bytes32 cSeed,,) = claimed.claimed(claimedId);
         assertEq(cSeed, origSeed, "claimed seed preserved");
 
-        // Treasury received the fee
         assertEq(treasury.balance, 0.001111 ether);
     }
 
-    /// @notice unwrap() returns USLUG and re-mints into 404.
+    /// @notice unwrap() returns USLUG and re-mints into 404. Same wrap-age + reveal prereqs.
     function test_unwrap_returns_to_404() public {
         vm.prank(treasury);
         token.transfer(alice, 1 * TPS);
+
+        // Reveal + age
+        vm.roll(block.number + uint256(token.REVEAL_DELAY()) + 1);
+        token.reveal(0);
+        vm.roll(block.number + uint256(token.MIN_WRAP_AGE()));
 
         vm.deal(alice, 1 ether);
         vm.prank(alice);
@@ -571,26 +733,36 @@ contract USlugg404CallHookTest is Test {
     }
 
     /// @notice Two consecutive callHook invocations must produce different
-    /// seeds — the second swap should re-roll the seed source. With our mock
-    /// rerolling on every sell+buy, two calls advance the seed 4 times.
+    /// seeds. Post-no-prevrandao redesign, the seeds come from
+    /// blockhash(mintBlock + REVEAL_DELAY) at reveal time, so we have to
+    /// roll the chain forward and call reveal() between invocations to
+    /// observe the seeds.
     function test_callHook_fresh_seed_per_invocation() public {
-        // Drop into "raw USLUG, no auto-mint" mode so alice's pre-call balance
-        // doesn't pull in 10 sluggs from the receive branch — that would push
-        // her existing-sluggs coverage past her balance and fail the buffer.
         hook.setSwapFired(false);
         vm.prank(treasury);
         token.transfer(alice, 10 * TPS);
 
+        // First mint at block N
         vm.prank(alice);
         token.callHook(1, 100);
+        // Roll past REVEAL_DELAY so we can reveal id 0
+        vm.roll(block.number + uint256(token.REVEAL_DELAY()) + 1);
+        token.reveal(0);
         bytes32 firstSeed;
         (firstSeed,,) = token.sluggs(0);
+        assertTrue(firstSeed != bytes32(0), "first seed revealed");
+
+        // Roll a few more blocks (so the next mint's reveal block differs)
+        vm.roll(block.number + 5);
 
         vm.prank(alice);
         token.callHook(1, 100);
+        vm.roll(block.number + uint256(token.REVEAL_DELAY()) + 1);
+        token.reveal(1);
         bytes32 secondSeed;
         (secondSeed,,) = token.sluggs(1);
 
+        assertTrue(secondSeed != bytes32(0), "second seed revealed");
         assertTrue(firstSeed != secondSeed, "fresh seed each invocation");
     }
 

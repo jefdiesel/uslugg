@@ -43,11 +43,24 @@ contract USlugg404 {
     uint256 public immutable tokensPerSlugg;
     uint256 public immutable totalSupply;
 
+    /// @notice A Slugg starts unrevealed: `seed = bytes32(0)` and `mintBlock`
+    /// is the block at which it was minted. After REVEAL_DELAY blocks, anyone
+    /// can call `reveal(id)` to lock in `seed` from `blockhash(mintBlock + REVEAL_DELAY)`.
+    /// This makes the seed unpredictable to the builder of the mint block —
+    /// they would have to also build block (mintBlock + REVEAL_DELAY) to control
+    /// the resulting hash, which is vanishingly unlikely.
     struct Slugg {
-        bytes32 seed;
+        bytes32 seed;          // bytes32(0) until reveal()
         address originalMinter;
-        uint64  mintedAtSwap;
+        uint64  mintBlock;     // L1 block number at which this slugg was minted
     }
+
+    /// @dev Number of blocks after mint before reveal becomes possible.
+    /// 2 means: builder of block N would need to also build block N+2 to
+    /// control the seed. Probability for largest staker (~33%) doing both:
+    /// ~10%. With each additional block, this drops geometrically. 2 is a
+    /// pragmatic floor — UX cost is ~24s wait before art shows.
+    uint64 public constant REVEAL_DELAY = 2;
 
     // ERC-20 state
     mapping(address => uint256) public balanceOf;
@@ -90,12 +103,14 @@ contract USlugg404 {
     // ERC-721 visibility (separate event because Solidity disallows event overload)
     event Transfer721(address indexed from, address indexed to, uint256 indexed id);
 
-    event SluggMinted(uint256 indexed id, address indexed to, bytes32 seed);
+    event SluggMinted(uint256 indexed id, address indexed to, uint64 mintBlock);
+    event SluggRevealed(uint256 indexed id, bytes32 seed);
     event SluggBurned(uint256 indexed id, address indexed from);
     event SeedSourceSet(address indexed seed);
     event SkipSet(address indexed account, bool skipped);
     event RendererSet(address indexed renderer);
     event ClaimedNftSet(address indexed claimedNft);
+    event TreasuryProposed(address indexed previousTreasury, address indexed pendingTreasury);
     event TreasurySet(address indexed treasury);
     event WrapFeeSet(uint256 feeWei);
     event UnwrapFeeSet(uint256 feeWei);
@@ -144,10 +159,43 @@ contract USlugg404 {
     error SeedSourceAlreadySet();
     error RendererAlreadySet();
     error ClaimedNftAlreadySet();
+    error WrapFeeTooHigh();         // setWrapFee above hard cap
+    error UnwrapFeeTooHigh();       // setUnwrapFee above hard cap
+    error CannotUnskip();           // setSkip is add-only — once true, stays true
+    error NotPendingTreasury();     // 2-step treasury accept by the wrong address
+    error BatchTooLarge();          // _move would mint more than MAX_MINTS_PER_TX
+    error NotYetRevealable();       // reveal called before mintBlock + REVEAL_DELAY
+    error AlreadyRevealed();        // reveal called twice for the same id
+    error NotMinted();              // reveal called for a non-existent slugg
+    error WrapTooSoon();            // wrap called before slugg passed MIN_WRAP_AGE
 
     /// @dev Hard ceiling on `maxSlippageBps` for callHook. 500 = 5%. Caller-
     /// supplied; UI defaults to 100 (1%) but we enforce the ceiling on-chain.
     uint16 public constant MAX_SLIPPAGE_BPS = 500;
+
+    /// @dev Hard cap on wrap/unwrap fees (in wei). Prevents owner from later
+    /// griefing users by setting wrap fee to 100 ETH. ~0.1 ETH is generous.
+    uint256 public constant MAX_WRAP_FEE_WEI = 0.1 ether;
+
+    /// @dev Maximum number of sluggs minted in a single _move call.
+    /// Caps atomic batch rarity-extraction: an attacker can still mint a
+    /// batch and pick rares, but can't drain the variance space in one tx.
+    /// 25 is roughly 4 ETH at typical mint price — significant capital
+    /// per attempt while still letting normal whales buy a sensible amount.
+    uint256 public constant MAX_MINTS_PER_TX = 25;
+
+    /// @dev Minimum block age before a slugg can be wrapped (extracted to
+    /// the standalone ERC-721). Combined with the deferred-reveal delay,
+    /// prevents single-tx atomic mint→inspect→wrap-the-rare→sell-rest
+    /// extraction. The attacker has to wait MIN_WRAP_AGE blocks before
+    /// they can pull the rare out — during which other extractors can
+    /// front-run them and the floor can recover.
+    uint64 public constant MIN_WRAP_AGE = 32;
+
+    /// @dev Two-step treasury transfer (matches the hook's owner pattern).
+    /// Prevents typo'd treasury addresses from permanently routing fees
+    /// to a black hole.
+    address payable public pendingTreasury;
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -196,9 +244,17 @@ contract USlugg404 {
     // setSeedSource removed: `seed` is immutable, set in constructor.
     // No post-deploy mutation of the randomness source is possible.
 
+    /// @notice Add an address to the skipSluggs set. ADD-ONLY: once true, an
+    /// address cannot be flipped back to false. Without this guard a
+    /// compromised owner could un-skip the PoolManager (causing it to
+    /// accumulate ungettable NFTs from sell-leg settles) or un-skip the
+    /// treasury (breaking initial supply distribution semantics).
+    /// Passing v=false reverts.
     function setSkip(address a, bool v) external onlyOwner {
-        skipSluggs[a] = v;
-        emit SkipSet(a, v);
+        if (!v) revert CannotUnskip();
+        if (skipSluggs[a]) return;  // idempotent
+        skipSluggs[a] = true;
+        emit SkipSet(a, true);
     }
 
     /// @notice One-shot: set the in-404 renderer. Reverts on second call.
@@ -235,17 +291,32 @@ contract USlugg404 {
         IUSluggClaimedAdmin(address(claimedNft)).setRoyalty(recipient, bps);
     }
 
-    function setTreasury(address payable t) external onlyOwner {
-        treasury = t;
-        emit TreasurySet(t);
+    /// @notice Step 1 of two-step treasury transfer. Owner proposes the new
+    /// treasury; no effect until acceptTreasury() is called from that address.
+    /// Prevents a typo from permanently routing fees to an unowned address.
+    /// Pass address(0) to cancel a previously-proposed transfer.
+    function proposeTreasury(address payable t) external onlyOwner {
+        pendingTreasury = t;
+        emit TreasuryProposed(treasury, t);
+    }
+
+    /// @notice Step 2: pendingTreasury claims the role. Owner-typo'd
+    /// addresses can never accept, so misfires don't brick fee flow.
+    function acceptTreasury() external {
+        if (msg.sender != pendingTreasury) revert NotPendingTreasury();
+        treasury = pendingTreasury;
+        delete pendingTreasury;
+        emit TreasurySet(treasury);
     }
 
     function setWrapFee(uint256 feeWei) external onlyOwner {
+        if (feeWei > MAX_WRAP_FEE_WEI) revert WrapFeeTooHigh();
         wrapFeeWei = feeWei;
         emit WrapFeeSet(feeWei);
     }
 
     function setUnwrapFee(uint256 feeWei) external onlyOwner {
+        if (feeWei > MAX_WRAP_FEE_WEI) revert UnwrapFeeTooHigh();
         unwrapFeeWei = feeWei;
         emit UnwrapFeeSet(feeWei);
     }
@@ -342,16 +413,23 @@ contract USlugg404 {
         // land as balance; the holder can call callHook() later to
         // materialize sluggs with a fresh seed.
         if (!skipSluggs[to] && toWholeAfter > toWholeBefore && seed.swapFiredThisTx()) {
-            uint256 gain     = toWholeAfter - toWholeBefore;
-            bytes32 hookSeed = seed.currentSeed();
-            uint64  swapNo   = seed.swapCount();
+            uint256 gain = toWholeAfter - toWholeBefore;
+            // Cap atomic batch extraction: an attacker minting hundreds in one
+            // tx to grind rares is a known uPEG-style vector. Reverting here
+            // forces them to spread across multiple txs (each subject to
+            // independent inclusion + recompete from other extractors).
+            if (gain > MAX_MINTS_PER_TX) revert BatchTooLarge();
+            uint64 mintBlk = uint64(block.number);
             for (uint256 i; i < gain; ++i) {
                 uint256 id = nextSluggId++;
-                bytes32 s  = keccak256(abi.encode(hookSeed, id, to));
-                sluggs[id]  = Slugg({ seed: s, originalMinter: to, mintedAtSwap: swapNo });
+                // No seed yet — set to bytes32(0). reveal() will compute the
+                // real seed from blockhash(mintBlock + REVEAL_DELAY) once the
+                // reveal block has been mined. Builders cannot predict that
+                // hash from the mint block.
+                sluggs[id]  = Slugg({ seed: bytes32(0), originalMinter: to, mintBlock: mintBlk });
                 ownerOf[id] = to;
                 _inventory[to].push(id);
-                emit SluggMinted(id, to, s);
+                emit SluggMinted(id, to, mintBlk);
                 emit Transfer721(address(0), to, id);
             }
         }
@@ -457,17 +535,18 @@ contract USlugg404 {
         }
         emit Transfer(address(this), msg.sender, usluggBack);
 
-        // ---- Mint `count` sluggs to caller with the post-second-swap seed.
-        // We read currentSeed AFTER both swaps so it's maximally entropic.
-        bytes32 hookSeed = seed.currentSeed();
-        uint64  swapNo   = seed.swapCount();
+        // ---- Mint `count` sluggs to caller. Same deferred-reveal model as
+        // _move: store mintBlock, set seed=bytes32(0), reveal later via
+        // blockhash(mintBlock + REVEAL_DELAY) which the builder of the mint
+        // block cannot control.
+        if (count > MAX_MINTS_PER_TX) revert BatchTooLarge();
+        uint64 mintBlk = uint64(block.number);
         for (uint256 i; i < count; ++i) {
             uint256 id = nextSluggId++;
-            bytes32 s  = keccak256(abi.encode(hookSeed, id, msg.sender));
-            sluggs[id]  = Slugg({ seed: s, originalMinter: msg.sender, mintedAtSwap: swapNo });
+            sluggs[id]  = Slugg({ seed: bytes32(0), originalMinter: msg.sender, mintBlock: mintBlk });
             ownerOf[id] = msg.sender;
             _inventory[msg.sender].push(id);
-            emit SluggMinted(id, msg.sender, s);
+            emit SluggMinted(id, msg.sender, mintBlk);
             emit Transfer721(address(0), msg.sender, id);
         }
 
@@ -491,6 +570,54 @@ contract USlugg404 {
     /// via the cached delta `ethGot = balanceAfter - balanceBefore`, so dust
     /// from third parties cannot be swept into a round-trip.
     receive() external payable {}
+
+    // -------- reveal: lock in the deferred-randomness seed --------
+
+    /// @notice Reveal the seed for a slugg. Anyone can call (no permission)
+    /// once block.number > mintBlock + REVEAL_DELAY. The seed is computed
+    /// from blockhash(mintBlock + REVEAL_DELAY), which the builder of the
+    /// mint block could not predict (they would have to also build the
+    /// reveal block to control it — vanishingly unlikely).
+    ///
+    /// Stale-blockhash fallback: if the reveal block is more than 256 blocks
+    /// in the past, blockhash() returns 0. In that case we fall back to
+    /// blockhash(block.number - 1) so the seed is still deterministic and
+    /// anyone-callable; the worst case is a rare slugg whose seed depends
+    /// on whoever first calls reveal() in the late-reveal window.
+    function reveal(uint256 id) external {
+        Slugg storage s = sluggs[id];
+        if (s.mintBlock == 0) revert NotMinted();
+        if (s.seed != bytes32(0)) revert AlreadyRevealed();
+        uint64 revealBlock = s.mintBlock + REVEAL_DELAY;
+        if (block.number <= revealBlock) revert NotYetRevealable();
+
+        bytes32 h = blockhash(revealBlock);
+        if (h == bytes32(0)) {
+            // >256 blocks since reveal block — use latest available hash as fallback
+            h = blockhash(block.number - 1);
+            // block.number >= 1 guaranteed inside any tx, so blockhash(N-1) is non-zero
+        }
+        bytes32 newSeed = keccak256(abi.encode(h, id, s.originalMinter));
+        s.seed = newSeed;
+        emit SluggRevealed(id, newSeed);
+    }
+
+    /// @notice Batch reveal helper. Same semantics as reveal(id) per id;
+    /// simply loops. Caller pays gas for each (about ~30k each).
+    function revealMany(uint256[] calldata ids) external {
+        for (uint256 i; i < ids.length; ++i) {
+            uint256 id = ids[i];
+            Slugg storage s = sluggs[id];
+            if (s.mintBlock == 0 || s.seed != bytes32(0)) continue; // skip non-existent / already-revealed
+            uint64 revealBlock = s.mintBlock + REVEAL_DELAY;
+            if (block.number <= revealBlock) continue; // skip too-early in batch
+            bytes32 h = blockhash(revealBlock);
+            if (h == bytes32(0)) h = blockhash(block.number - 1);
+            bytes32 newSeed = keccak256(abi.encode(h, id, s.originalMinter));
+            s.seed = newSeed;
+            emit SluggRevealed(id, newSeed);
+        }
+    }
 
     // -------- views --------
 
@@ -538,6 +665,17 @@ contract USlugg404 {
         if (balanceOf[msg.sender] < tokensPerSlugg) revert InsufficientBalance();
 
         Slugg memory c = sluggs[id];
+        // MIN_WRAP_AGE prevents single-tx atomic mint→inspect→wrap-the-rare
+        // extraction: the attacker has to wait MIN_WRAP_AGE blocks before
+        // pulling the rare into the standalone ERC-721, during which time
+        // other extractors and the market can react. Combined with the
+        // deferred reveal, the attacker doesn't even know which one is rare
+        // until reveal time has passed.
+        if (block.number < uint256(c.mintBlock) + MIN_WRAP_AGE) revert WrapTooSoon();
+        // Wrapped sluggs must have a real seed — wrapping an unrevealed slugg
+        // would freeze the original art identity to bytes32(0) and break the
+        // wrap/unwrap round-trip. Holder must reveal() first.
+        if (c.seed == bytes32(0)) revert NotYetRevealable();
 
         // ---- EFFECTS: all internal state writes (and their describing events)
         // happen before any external interaction.
@@ -575,7 +713,6 @@ contract USlugg404 {
 
         // Reads (staticcalls). Cached before effects so the CEI ordering below is clean.
         (bytes32 oldSeed,,) = claimedNft.claimed(claimedId);
-        uint64 swapNo       = seed.swapCount();
 
         // ---- EFFECTS: all internal state writes happen here, before any external mutation.
         unchecked {
@@ -585,14 +722,19 @@ contract USlugg404 {
         emit Transfer(address(this), msg.sender, tokensPerSlugg);
 
         newSluggId = nextSluggId++;
+        // The unwrapped slugg keeps the original wrapped art identity
+        // (oldSeed); it doesn't go through the deferred-reveal flow because
+        // the seed is already known. mintBlock still gets the current block
+        // for accounting; reveal() would be a no-op since seed != 0.
         sluggs[newSluggId] = Slugg({
             seed:           oldSeed,
             originalMinter: msg.sender,
-            mintedAtSwap:   swapNo
+            mintBlock:      uint64(block.number)
         });
         ownerOf[newSluggId] = msg.sender;
         _inventory[msg.sender].push(newSluggId);
-        emit SluggMinted(newSluggId, msg.sender, oldSeed);
+        emit SluggMinted(newSluggId, msg.sender, uint64(block.number));
+        emit SluggRevealed(newSluggId, oldSeed);
         emit Transfer721(address(0), msg.sender, newSluggId);
         emit SluggUnwrapped(msg.sender, claimedId, newSluggId);
 

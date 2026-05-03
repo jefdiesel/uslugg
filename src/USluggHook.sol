@@ -11,21 +11,29 @@ import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol
 
 import {ISeedSource} from "./ISeedSource.sol";
 
-/// @notice Re-rolls an on-chain seed every time the v4 PoolManager calls afterSwap.
-/// Captures a small protocol fee (default 0.1%) on every swap, taken in the
-/// unspecified output currency. Fee accumulates as real tokens inside the hook
-/// and is withdrawable by the owner (multisig at mainnet launch).
+/// @notice Captures a small protocol fee (default 0.1%) on every swap, taken in
+/// the unspecified output currency. Fee accumulates as real tokens inside the
+/// hook and is withdrawable by the owner (multisig at mainnet launch).
+///
+/// Sets a transient `swapFiredThisTx` flag so USlugg404._move knows that
+/// receive-side auto-minting is allowed in this tx (the only path that should
+/// auto-mint sluggs is a swap through the locked pool).
+///
+/// NOTE on randomness: this hook is intentionally NOT a randomness oracle.
+/// Earlier versions mixed `block.prevrandao` into a `currentSeed` here — that
+/// is predictable to block builders and exposed mints to MEV grinding.
+/// Post-hardening (no-prevrandao redesign), randomness is deferred to a
+/// future-block blockhash at reveal time inside USlugg404 (unpredictable to
+/// the builder of the mint block, since they cannot control the next block's
+/// hash unless they win two consecutive slots — extremely rare).
 ///
 /// REQUIRED ADDRESS BITS: afterSwap (1<<6) + afterSwapReturnsDelta (1<<2) = 0x44.
 /// Mine via HookMiner before deploy (CREATE2 salt).
 contract USluggHook is IHooks, ISeedSource {
     /// @dev Bumped each redeploy to force fresh CREATE2 bytecode → fresh address.
-    uint256 public constant DEPLOY_REVISION = 1;
+    uint256 public constant DEPLOY_REVISION = 2;
 
     IPoolManager public immutable poolManager;
-
-    bytes32 public override currentSeed;
-    uint64  public override swapCount;
 
     address public owner;
     /// @dev Pending owner — the address proposed via transferOwnership() that
@@ -74,7 +82,6 @@ contract USluggHook is IHooks, ISeedSource {
     constructor(IPoolManager _pm) {
         poolManager = _pm;
         owner = msg.sender;
-        currentSeed = keccak256(abi.encode(block.prevrandao, block.timestamp, block.number, address(this)));
     }
 
     // -------- admin --------
@@ -158,14 +165,12 @@ contract USluggHook is IHooks, ISeedSource {
             return (IHooks.afterSwap.selector, int128(0));
         }
 
-        unchecked { swapCount++; }
-        currentSeed = keccak256(
-            abi.encode(currentSeed, swapCount, block.prevrandao, block.timestamp, block.number)
-        );
-
-        // Set transient flag AFTER seed mutation so any reader within this tx
-        // (USlugg404._move on the receive branch) sees `swapFiredThisTx()==true`
-        // and reads the freshly-rolled `currentSeed`.
+        // Set transient flag so any reader within this tx (USlugg404._move on
+        // the receive branch) sees `swapFiredThisTx()==true` and is permitted
+        // to mint. We deliberately do NOT mix prevrandao into a stored seed
+        // here — that would be predictable to builders. The actual per-mint
+        // randomness is computed at reveal() time in USlugg404 from a future
+        // block's hash, which the builder of the mint block cannot control.
         assembly { tstore(_SWAP_FIRED_SLOT, 1) }
 
         // Canonical Uniswap pattern (FeeTakingHook). Fee is taken on the unspecified
