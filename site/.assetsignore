@@ -1,0 +1,7 @@
+cloudflare/
+api/
+vercel.json
+wrangler.jsonc
+.wrangler/
+node_modules/
+.gitignore
